@@ -62,25 +62,9 @@ Cuando uses `get_trello_card` o `get_jira_issue`, **siempre** lanzá un agente O
 6. **Presentá el análisis de Opus** al usuario (sin la sección de contexto, que es interna).
 7. **Esperá confirmación** de que el análisis es correcto.
 8. **¿Continuar con /sdd-new?** Una vez confirmado el análisis, preguntale:
-   "¿Querés arrancar la implementación con `/sdd-new`? Te paso todo el contexto analizado para que no tenga que re-preguntar lo que ya sabemos."
+   "¿Querés arrancar la implementación con `/sdd-new`? El contexto del análisis ya está en la conversación — el skill lo va a leer directamente y solo te va a preguntar las dudas que genuinamente quedaron abiertas."
 
-   Si dice que sí, invocá el skill `sdd-new` (via Skill tool) pasando como `args` el siguiente bloque construido con la info del análisis de Opus:
+   Si dice que sí, decile:
+   > Escribí `/sdd-new` para arrancar. No hace falta que pegues nada — el skill toma el contexto de la conversación automáticamente.
 
-   ```
-   [Título del issue/card]
-
-   Qué hay que hacer: [contenido de ¿Qué hay que hacer?]
-
-   Puntos clave: [contenido de Puntos clave]
-
-   Criterios de aceptación:
-   [contenido de ¿Cuándo está listo?]
-
-   Ambigüedades sin resolver:
-   [contenido de Preguntas abiertas]
-
-   Propuesta técnica inicial:
-   [contenido de Cómo lo haría]
-   ```
-
-   /sdd-new va a usar este contexto para decidir la lane (fix/quick/full) y reducir el grill interview solo a las dudas genuinas que el análisis no pudo resolver.
+   **No intentes invocar el skill automáticamente** (tiene `disable-model-invocation`). El usuario lo inicia manualmente y el skill lee el análisis de Opus directamente desde la conversación.
