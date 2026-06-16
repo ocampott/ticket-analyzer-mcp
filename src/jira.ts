@@ -66,7 +66,7 @@ async function fetchJira<T>(url: string, authHeader: string): Promise<T> {
 // Converts Atlassian Document Format (ADF) JSON to plain text.
 // Unknown node types fall through to child recursion so the function never throws.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function adfToText(node: any): string {
+export function adfToText(node: any): string {
   if (!node) return "";
 
   if (node.type === "text") {
@@ -221,7 +221,7 @@ async function fetchAllComments(
   return all;
 }
 
-export async function getJiraIssue(issueKey: string): Promise<JiraIssueData> {
+export async function getJiraIssue(issueKey: string, includeImages = true): Promise<JiraIssueData> {
   const { host, authHeader } = getCredentials();
   const baseUrl = `https://${host}`;
 
@@ -251,14 +251,18 @@ export async function getJiraIssue(issueKey: string): Promise<JiraIssueData> {
   const imageAttachments = rawAttachments.filter((a) => a.mimeType?.startsWith("image/"));
   const nonImageAttachments = rawAttachments.filter((a) => !a.mimeType?.startsWith("image/"));
 
-  const downloadedImages = await Promise.all(
-    imageAttachments.map(async (a): Promise<JiraImage | null> => {
-      const base64 = await downloadJiraImage(a.content, authHeader);
-      if (!base64) return null;
-      return { name: a.filename, mimeType: a.mimeType, base64 };
-    })
-  );
-  const images = downloadedImages.filter((img): img is JiraImage => img !== null);
+  let images: JiraImage[] = [];
+
+  if (includeImages) {
+    const downloadedImages = await Promise.all(
+      imageAttachments.map(async (a): Promise<JiraImage | null> => {
+        const base64 = await downloadJiraImage(a.content, authHeader);
+        if (!base64) return null;
+        return { name: a.filename, mimeType: a.mimeType, base64 };
+      })
+    );
+    images = downloadedImages.filter((img): img is JiraImage => img !== null);
+  }
 
   const issue: JiraIssueResult = {
     key: raw.key,

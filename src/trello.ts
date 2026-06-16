@@ -11,6 +11,8 @@ export interface TrelloCard {
     checkItems: { id: string; name: string; state: "complete" | "incomplete" }[];
   }[];
   list?: { id: string; name: string } | null;
+  actions?: TrelloAction[];
+  attachments?: TrelloAttachmentRaw[];
 }
 
 export interface TrelloAction {
@@ -99,38 +101,6 @@ async function fetchTrello<T>(url: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function getCard(cardId: string): Promise<TrelloCard> {
-  const { apiKey, token } = getCredentials();
-  const url = `https://api.trello.com/1/cards/${cardId}?fields=name,desc,due,shortUrl,labels&members=true&member_fields=fullName&checklists=all&list=true&list_fields=name&key=${apiKey}&token=${token}`;
-  console.error(`[trello] GET card ${cardId}`);
-  return fetchTrello<TrelloCard>(url);
-}
-
-export async function getComments(cardId: string): Promise<TrelloComment[]> {
-  const { apiKey, token } = getCredentials();
-  const url = `https://api.trello.com/1/cards/${cardId}/actions?filter=commentCard&key=${apiKey}&token=${token}`;
-  console.error(`[trello] GET comments for card ${cardId}`);
-  const actions = await fetchTrello<TrelloAction[]>(url);
-
-  if (!actions || actions.length === 0) {
-    return [];
-  }
-
-  return actions.map((action) => ({
-    author: action.memberCreator.fullName,
-    date: action.date,
-    text: action.data.text,
-  }));
-}
-
-export async function getAttachments(cardId: string): Promise<TrelloAttachmentRaw[]> {
-  const { apiKey, token } = getCredentials();
-  const url = `https://api.trello.com/1/cards/${cardId}/attachments?key=${apiKey}&token=${token}`;
-  console.error(`[trello] GET attachments for card ${cardId}`);
-  const attachments = await fetchTrello<TrelloAttachmentRaw[]>(url);
-  return attachments ?? [];
-}
-
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB
 
 export async function downloadImage(url: string): Promise<string | null> {
@@ -169,13 +139,21 @@ export async function downloadImage(url: string): Promise<string | null> {
   }
 }
 
-export async function getTrelloCard(cardId: string): Promise<TrelloCardData> {
-  const [card, comments, rawAttachments] = await Promise.all([
-    getCard(cardId),
-    getComments(cardId),
-    getAttachments(cardId),
-  ]);
+export async function getTrelloCard(cardId: string, includeImages = true): Promise<TrelloCardData> {
+  const { apiKey, token } = getCredentials();
+  const url = `https://api.trello.com/1/cards/${cardId}?fields=name,desc,due,shortUrl,labels&members=true&member_fields=fullName&checklists=all&list=true&list_fields=name&actions=commentCard&actions_limit=1000&attachments=true&attachment_fields=name,url,mimeType,isUpload,bytes&key=${apiKey}&token=${token}`;
 
+  console.error(`[trello] GET card ${cardId}`);
+  const card = await fetchTrello<TrelloCard>(url);
+
+  const rawActions = card.actions ?? [];
+  const comments: TrelloComment[] = rawActions.map((action) => ({
+    author: action.memberCreator.fullName,
+    date: action.date,
+    text: action.data.text,
+  }));
+
+  const rawAttachments = card.attachments ?? [];
   const imageAttachments = rawAttachments.filter((a) =>
     a.mimeType?.startsWith("image/")
   );
@@ -183,15 +161,18 @@ export async function getTrelloCard(cardId: string): Promise<TrelloCardData> {
     (a) => !a.mimeType?.startsWith("image/")
   );
 
-  const downloadedImages = await Promise.all(
-    imageAttachments.map(async (a): Promise<TrelloImage | null> => {
-      const base64 = await downloadImage(a.url);
-      if (!base64) return null;
-      return { name: a.name, mimeType: a.mimeType, base64 };
-    })
-  );
+  let images: TrelloImage[] = [];
 
-  const images = downloadedImages.filter((img): img is TrelloImage => img !== null);
+  if (includeImages) {
+    const downloadedImages = await Promise.all(
+      imageAttachments.map(async (a): Promise<TrelloImage | null> => {
+        const base64 = await downloadImage(a.url);
+        if (!base64) return null;
+        return { name: a.name, mimeType: a.mimeType, base64 };
+      })
+    );
+    images = downloadedImages.filter((img): img is TrelloImage => img !== null);
+  }
 
   return {
     card: {

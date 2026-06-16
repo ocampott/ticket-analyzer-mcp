@@ -150,6 +150,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "The Trello card ID to fetch",
             },
+            include_images: {
+              type: "boolean",
+              description: "Whether to download and include attached images in the response. Set to false to save tokens when images are not needed for analysis. Defaults to true.",
+            },
           },
           required: ["card_id"],
         },
@@ -165,6 +169,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "The Jira issue key to fetch (e.g. PROJ-123)",
             },
+            include_images: {
+              type: "boolean",
+              description: "Whether to download and include attached images in the response. Set to false to save tokens when images are not needed for analysis. Defaults to true.",
+            },
           },
           required: ["issue_key"],
         },
@@ -177,7 +185,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   if (name === "get_trello_card") {
-    const cardId = (args as { card_id?: string } | undefined)?.card_id;
+    const typedArgs = args as { card_id?: string; include_images?: boolean } | undefined;
+    const cardId = typedArgs?.card_id;
+    const includeImages = typedArgs?.include_images ?? true;
 
     if (!cardId || typeof cardId !== "string") {
       throw new McpError(ErrorCode.InvalidParams, "card_id is required and must be a string");
@@ -186,7 +196,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     console.error(`[pm-mcp] Tool called: get_trello_card(${cardId})`);
 
     try {
-      const { card, images } = await getTrelloCard(cardId);
+      const { card, images } = await getTrelloCard(cardId, includeImages);
       console.error(
         `[pm-mcp] Success: card "${card.name}", ${card.comments.length} comment(s), ${images.length} image(s)`
       );
@@ -212,7 +222,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   if (name === "get_jira_issue") {
-    const issueKey = (args as { issue_key?: string } | undefined)?.issue_key;
+    const typedArgs = args as { issue_key?: string; include_images?: boolean } | undefined;
+    const issueKey = typedArgs?.issue_key;
+    const includeImages = typedArgs?.include_images ?? true;
 
     if (!issueKey || typeof issueKey !== "string") {
       throw new McpError(ErrorCode.InvalidParams, "issue_key is required and must be a string");
@@ -221,7 +233,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     console.error(`[pm-mcp] Tool called: get_jira_issue(${issueKey})`);
 
     try {
-      const { issue, images } = await getJiraIssue(issueKey);
+      const { issue, images } = await getJiraIssue(issueKey, includeImages);
       console.error(
         `[pm-mcp] Success: issue "${issue.key}", ${issue.comments.length} comment(s), ${images.length} image(s)`
       );
