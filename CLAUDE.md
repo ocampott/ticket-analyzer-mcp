@@ -126,13 +126,38 @@ S | M | L | XL
 
 ---
 
-### Paso 6 — Guardá el contexto (solo si el agente exploró)
-Si no había cache, escribí `.claude/project-context.md`:
+### Paso 6A — Guardá el contexto inicial (solo si el agente exploró)
+Si no había cache, escribí los dos archivos:
+
+**`.claude/project-context.md`:**
 ```
 <!-- Generado: YYYY-MM-DD -->
 [contenido de la sección ## Contexto del proyecto del agente]
 ```
-Este archivo está en `.gitignore` — es local de cada dev.
+
+**`.claude/patterns.md`** (primera versión con los patrones más importantes detectados durante la exploración):
+```
+<!-- Generado: YYYY-MM-DD | Última actualización: YYYY-MM-DD -->
+[patrones concretos reutilizables encontrados — misma sección ## Patrones encontrados del agente, o los más relevantes de la exploración inicial]
+```
+
+Ambos archivos están en `.gitignore` — son locales de cada dev.
+
+### Paso 6B — Actualizá patrones incrementalmente (solo si hubo nuevos)
+Si había cache + el agente reportó `## Patrones encontrados`:
+1. Leer `.claude/patterns.md`. Si no existe aún (primera vez con este feature), crear el archivo con solo el encabezado: `<!-- Generado: YYYY-MM-DD | Última actualización: YYYY-MM-DD -->`.
+2. Para cada patrón reportado:
+   - Si **no existe** en el archivo: agregarlo al final.
+   - Si **ya existe**: actualizar solo si la nueva info aporta valor concreto (archivos adicionales, mejor descripción).
+   - Si es duplicado sin valor nuevo: ignorar.
+3. Actualizar el timestamp `Última actualización` en el encabezado.
+
+Si el agente **no** reportó `## Patrones encontrados`: no modificar `patterns.md`.
+
+**Criterio de guardado** — guardar solo si el patrón cumple al menos uno:
+- Aparece en ≥ 2 archivos del proyecto
+- Es un flujo complejo y completo (auth, upload, websocket, pagination)
+- Es la referencia primaria que el agente usó para implementar el ticket
 
 ### Paso 7 — Presentá el análisis
 Mostrá el análisis al usuario (sin la sección `## Contexto del proyecto`).
