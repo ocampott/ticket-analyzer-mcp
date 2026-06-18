@@ -321,6 +321,9 @@ describe("addTrelloComment", () => {
 
     const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toContain("/1/cards/card123/actions/comments");
+    expect(url).toContain("key=test-key");
+    expect(url).toContain("token=test-token");
+    expect(url).toContain("text=");
     expect((options as RequestInit).method).toBe("POST");
   });
 

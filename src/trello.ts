@@ -305,13 +305,10 @@ export async function addTrelloComment(
 ): Promise<void> {
   const { apiKey, token } = getCredentials();
 
+  const params = new URLSearchParams({ text, key: apiKey, token });
   const response = await fetch(
-    `https://api.trello.com/1/cards/${cardId}/actions/comments`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, key: apiKey, token }),
-    }
+    `https://api.trello.com/1/cards/${cardId}/actions/comments?${params.toString()}`,
+    { method: "POST" }
   );
 
   if (!response.ok) {
