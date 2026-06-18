@@ -161,6 +161,7 @@ Si el agente **no** reportó `## Patrones encontrados`: no modificar `patterns.m
 
 ### Paso 7 — Presentá el análisis
 Mostrá el análisis al usuario (sin la sección `## Contexto del proyecto`).
+La sección `## Patrones encontrados` sí se muestra al usuario cuando aparece en el análisis.
 
 ### Paso 8 — Dudas abiertas
 Si hay "Dudas", presentalas con `AskUserQuestion`:
