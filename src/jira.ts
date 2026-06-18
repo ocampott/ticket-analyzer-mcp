@@ -355,3 +355,91 @@ export async function getJiraIssue(
 
   return { issue, images };
 }
+
+export interface JiraSearchResult {
+  issues: {
+    key: string;
+    summary: string;
+    status: string;
+    assignee: string | null;
+    priority: string | null;
+  }[];
+  total: number;
+}
+
+export async function searchJiraIssues(
+  jql: string,
+  maxResults = 20
+): Promise<JiraSearchResult> {
+  const { host, authHeader } = getCredentials();
+  const baseUrl = `https://${host}`;
+
+  interface RawSearchResponse {
+    total: number;
+    issues: {
+      key: string;
+      fields: {
+        summary: string;
+        status?: { name: string };
+        assignee?: { displayName: string } | null;
+        priority?: { name: string } | null;
+      };
+    }[];
+  }
+
+  const raw = await fetchJira<RawSearchResponse>(
+    `${baseUrl}/rest/api/3/search?jql=${encodeURIComponent(jql)}&maxResults=${maxResults}&fields=summary,status,assignee,priority`,
+    authHeader
+  );
+
+  return {
+    total: raw.total,
+    issues: raw.issues.map((i) => ({
+      key: i.key,
+      summary: i.fields.summary,
+      status: i.fields.status?.name ?? "",
+      assignee: i.fields.assignee?.displayName ?? null,
+      priority: i.fields.priority?.name ?? null,
+    })),
+  };
+}
+
+export async function addJiraComment(
+  issueKey: string,
+  text: string
+): Promise<void> {
+  const { host, authHeader } = getCredentials();
+  const baseUrl = `https://${host}`;
+
+  const body = {
+    body: {
+      type: "doc",
+      version: 1,
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text }],
+        },
+      ],
+    },
+  };
+
+  const response = await fetch(
+    `${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: authHeader,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Jira comment failed: HTTP ${response.status} ${response.statusText}`
+    );
+  }
+}
