@@ -8,73 +8,172 @@ Para que Claude analice los resultados automáticamente con Opus, copiá la secc
 
 ---
 
-## Análisis de tarjetas y issues con Opus
+## Análisis de tarjetas y issues
 
-Cuando uses `get_trello_card` o `get_jira_issue`, **siempre** lanzá un agente Opus para analizar los requerimientos antes de responder al usuario. Seguí estos pasos:
+Cuando uses `get_trello_card` o `get_jira_issue`, seguí estos pasos:
 
-1. **Preguntale al usuario si quiere incluir imágenes en el análisis.**
-   Decile: "¿Querés que analice las imágenes adjuntas? Omitirlas ahorra tokens si no son necesarias."
-   Según la respuesta, usá `include_images: true` o `include_images: false` en el siguiente paso.
+### Paso 1 — Imágenes
+Preguntale al usuario: "¿Querés que analice las imágenes adjuntas? Omitirlas ahorra tokens si no son necesarias."
+Usá `include_images: true/false` según la respuesta.
 
-2. **Llamá al tool** con el parámetro `include_images` adecuado.
+### Paso 2 — Llamá al tool
+Con el `include_images` adecuado.
 
-3. **Intentá leer el archivo de contexto del proyecto**: `.claude/project-context.md`.
-   - Si **el archivo existe**: leé la primera línea para ver la fecha de generación. Si tiene más de 30 días o el usuario mencionó que el proyecto cambió mucho, borralo y tratalo como si no existiera.
-   - Si **existe y es reciente**: tenés el contexto listo, no hace falta explorar el código.
-   - Si **no existe**: Opus va a explorar el proyecto y vas a escribir el archivo después.
+### Paso 3 — Contexto del proyecto
+Intentá leer `.claude/project-context.md`:
+- **Existe y es reciente** (< 30 días): tenés el contexto listo.
+- **Existe pero tiene más de 30 días** (o el usuario dijo que el proyecto cambió): borralo y tratalo como no existente.
+- **No existe**: Opus va a explorar el proyecto y vas a escribir el archivo después.
 
-4. **Lanzá un agente Opus** (`Agent` tool con `model: "opus"`) con el contenido del issue y según el caso:
+Además, intentá leer `.claude/patterns.md`:
+- **Existe**: incluirlo en el prompt del agente (no tiene expiración — los patrones son estables).
+- **No existe**: el agente puede generar la primera versión si detecta patrones importantes.
 
-   - Si **tenés contexto cacheado**: incluilo en el prompt bajo el título "Contexto del proyecto (cacheado)". Indicale que no necesita explorar el código.
-   - Si **no tenés contexto**: pedile que explore el proyecto usando `Read`, `Bash` con `find`/`ls`, etc. Que entienda: estructura de carpetas, tecnologías, convenciones de nombres, patrones de código, organización de funciones. Que incluya al final de su respuesta una sección `## Contexto del proyecto` con un resumen **conciso de máximo 200 palabras**, en formato estructurado (tech stack, estructura de carpetas, convenciones clave, patrones importantes). Solo lo esencial para entender cómo está hecho el proyecto.
+### Paso 4 — Evaluá la complejidad del ticket
 
-   En ambos casos, el análisis debe estar en español, con un tono **amigable y conversacional**, como si le explicara a un colega. Sin jerga técnica innecesaria. Sé conciso — priorizá calidad sobre completitud. Con estas secciones **en este orden**:
+Leé el contenido del ticket y verificá si cumple alguno de estos criterios de escalación a Opus:
+- Más de 10 archivos probablemente afectados
+- Requiere cambios en schema de base de datos
+- Múltiples servicios/módulos a modificar
+- Integraciones externas involucradas
+- Autenticación o permisos impactados
+- Arquitectura existente en conflicto con el feature
+- Alta ambigüedad en los requerimientos
+- Riesgo alto en producción
 
-   **¿Qué hay que hacer?**
-   2-3 oraciones. Explicación clara y simple de qué se necesita construir o resolver.
+**Si no hay cache** → siempre Opus (exploración completa del proyecto).
+**Si hay cache + ticket cumple algún criterio** → Opus.
+**Si hay cache + ticket no cumple ningún criterio** → Sonnet.
 
-   **Puntos clave**
-   Máximo 4 bullets de 1 línea. Los aspectos más importantes del requerimiento.
+### Paso 5 — Lanzá el agente
 
-   **¿Qué hay que tener en cuenta?**
-   Máximo 3 bullets. Solo restricciones, casos borde o detalles genuinamente no obvios. **Omitir esta sección si no hay nada que un dev experimentado no inferiría solo.**
+Usá el `Agent` tool con el modelo adecuado (paso 4) y este prompt:
 
-   **¿Cuándo está listo?**
-   Máximo 4 bullets. Los criterios de aceptación más importantes.
+---
 
-   **Antes de arrancar**
-   Máximo 5 items con ✓. Acciones concretas: decisiones a tomar, cosas a confirmar con el PO, dependencias a verificar. Sin acciones genéricas.
+You are a Senior Software Analyst and Technical Lead.
+Your job: analyze the ticket and produce the smallest possible output with all critical implementation information.
 
-   **Cómo lo haría**
-   Propuesta concreta de implementación **basada en el código real del proyecto**:
-   - Enfoque recomendado, alineado con los patrones existentes
-   - Pasos principales (a alto nivel)
-   - Qué evitar o qué podría salir mal
+Rules:
+- Think deeply, answer briefly. Bullets over paragraphs.
+- Mention exact files whenever possible.
+- Reuse existing patterns — never introduce new ones.
+- Maximum 15 bullet points total across all sections.
+- No code. No architecture essays. No reasoning narration.
+- Output in Spanish.
 
-   **Dónde falla esto a escala** *(incluir SOLO si el ticket involucra al menos uno de: endpoints paginados, scroll infinito, N+1 requests, alta concurrencia, o volumen de datos significativo. Omitir en tickets de UI puro, CRUD simple, o cambios de texto/i18n.)*
-   Las 3 formas concretas en que el plan se rompe. Indicar qué parte del requerimiento genera cada riesgo.
+[INCLUIR SI HAY CONTEXTO CACHEADO:]
+**Contexto del proyecto (cacheado):**
+{contenido de .claude/project-context.md}
 
-   **Preguntas abiertas** *(siempre al final — omitir si no hay ambigüedades reales)*
-   Numeradas: 1. 2. 3. — máximo 4. Cada una cita qué parte del card la genera. Solo las que realmente impactan el diseño o la implementación. Sin preguntas genéricas u obvias.
+Usá este contexto para encontrar eficientemente los archivos específicos del ticket sin explorar todo el codebase desde cero. Aun así, inspeccioná los archivos relevantes para el ticket antes de responder.
 
-5. **Si Opus exploró el proyecto** (porque no había cache), escribí el archivo `.claude/project-context.md` con este formato:
-   ```
-   <!-- Generado: YYYY-MM-DD -->
-   [contenido de la sección ## Contexto del proyecto que devolvió Opus]
-   ```
-   Este archivo está en `.gitignore` — es local de cada dev.
+[INCLUIR SI HAY patterns.md:]
+**Patrones conocidos del proyecto:**
+{contenido de .claude/patterns.md}
 
-6. **Presentá el análisis de Opus** al usuario (sin la sección de contexto interna).
+Antes de explorar el codebase, cruzá estos patrones con el ticket. Si el ticket involucra una funcionalidad cuyo patrón ya está documentado, reutilizá la referencia directamente sin re-explorar esos archivos.
 
-7. **Si hay preguntas abiertas**, presentalas de forma interactiva con `AskUserQuestion`:
-   - Preguntas con opciones claras (sí/no, A/B, opciones discretas) → convertirlas a opciones seleccionables. Hasta 4 preguntas a la vez.
-   - Preguntas genuinamente abiertas (requieren texto libre) → mostrarlas numeradas en texto y pedir al usuario que responda con número + respuesta.
-   - Priorizar las preguntas que bloquean el diseño.
+[INCLUIR SI NO HAY CONTEXTO CACHEADO:]
+No hay contexto cacheado. Explorá el proyecto primero usando `find`, `ls`, `Read`.
+Entendé: estructura de carpetas, tech stack, convenciones de nombres, patrones de código, organización de funciones.
+Al final de tu respuesta incluí una sección `## Contexto del proyecto`: resumen estructurado en ≤200 palabras (tech stack, carpetas, convenciones clave, patrones importantes). Solo lo esencial.
 
-8. **¿Continuar con /sdd-new?** Una vez resueltas las preguntas, ofrecé:
-   "¿Querés arrancar la implementación con `/sdd-new`? El contexto del análisis ya está en la conversación — el skill lo va a leer directamente."
+**Ticket:**
+{contenido del ticket}
 
-   Si dice que sí, decile:
-   > Escribí `/sdd-new` para arrancar. No hace falta que pegues nada — el skill toma el contexto de la conversación automáticamente.
+**Antes de responder:**
+0. Si hay patrones cacheados, cruzalos con el ticket antes de explorar el codebase. Reutilizá referencias documentadas directamente.
+1. Analizá el ticket.
+2. Inspeccioná el codebase (guiado por el contexto cacheado si existe).
+3. Encontrá archivos, servicios, APIs, modelos, componentes e implementaciones existentes relacionados.
+4. Identificá patrones reutilizables ya usados en el repositorio.
+5. Detectá riesgos y blockers.
+6. Detectá requerimientos faltantes o ambigüedades.
+7. Proponé la solución más simple alineada con la arquitectura actual.
+8. Evitá introducir patrones nuevos si los existentes alcanzan.
 
-   **No intentes invocar el skill automáticamente** (tiene `disable-model-invocation`). El usuario lo inicia manualmente y el skill lee el análisis de Opus directamente desde la conversación.
+**Output ÚNICAMENTE en este formato:**
+
+## Resumen
+<1-2 oraciones>
+
+## Impacto
+- archivo/ruta
+- archivo/ruta
+
+## Implementación
+- Paso 1
+- Paso 2
+- Paso 3
+
+## Patrones encontrados
+*(omitir si no hay patrones reutilizables relevantes para el ticket)*
+**Referencia:** ruta/al/componente-o-módulo
+**Archivos:** archivo1.js, archivo2.js
+**Uso:** Para qué sirve este patrón en el contexto del ticket.
+
+## Riesgos
+*(omitir si no hay riesgos reales)*
+- Riesgo 1
+
+## Dudas
+*(omitir si los requerimientos son claros)*
+- Pregunta 1
+
+## Estimación
+S | M | L | XL
+
+---
+
+### Paso 6A — Guardá el contexto inicial (solo si el agente exploró)
+Si no había cache, escribí los dos archivos:
+
+**`.claude/project-context.md`:**
+```
+<!-- Generado: YYYY-MM-DD -->
+[contenido de la sección ## Contexto del proyecto del agente]
+```
+
+**`.claude/patterns.md`** (primera versión con los patrones más importantes detectados durante la exploración):
+```
+<!-- Generado: YYYY-MM-DD | Última actualización: YYYY-MM-DD -->
+[patrones concretos reutilizables encontrados — misma sección ## Patrones encontrados del agente, o los más relevantes de la exploración inicial]
+```
+
+Ambos archivos están en `.gitignore` — son locales de cada dev.
+
+### Paso 6B — Actualizá patrones incrementalmente (solo si hubo nuevos)
+Si había cache + el agente reportó `## Patrones encontrados`:
+1. Leer `.claude/patterns.md`. Si no existe aún (primera vez con este feature), crear el archivo con solo el encabezado: `<!-- Generado: YYYY-MM-DD | Última actualización: YYYY-MM-DD -->`.
+2. Para cada patrón reportado:
+   - Si **no existe** en el archivo: agregarlo al final.
+   - Si **ya existe**: actualizar solo si la nueva info aporta valor concreto (archivos adicionales, mejor descripción).
+   - Si es duplicado sin valor nuevo: ignorar.
+3. Actualizar el timestamp `Última actualización` en el encabezado.
+
+Si el agente **no** reportó `## Patrones encontrados`: no modificar `patterns.md`.
+
+**Criterio de guardado** — guardar solo si el patrón cumple al menos uno:
+- Aparece en ≥ 2 archivos del proyecto
+- Es un flujo complejo y completo (auth, upload, websocket, pagination)
+- Es la referencia primaria que el agente usó para implementar el ticket
+
+### Paso 7 — Presentá el análisis
+Mostrá el análisis al usuario (sin la sección `## Contexto del proyecto`).
+La sección `## Patrones encontrados` sí se muestra al usuario cuando aparece en el análisis.
+
+### Paso 8 — Dudas abiertas
+Si hay "Dudas", presentalas con `AskUserQuestion`:
+- Preguntas con opciones discretas (sí/no, A/B) → opciones seleccionables (máx 4 por pregunta)
+- Preguntas genuinamente abiertas → numeradas en texto, pedile al usuario que responda con número + respuesta
+- Priorizá las que bloquean el diseño
+
+### Paso 9 — Handoff a /sdd-new
+Una vez resueltas las dudas, ofrecé:
+"¿Querés arrancar la implementación con `/sdd-new`? El contexto del análisis ya está en la conversación."
+
+Si dice que sí:
+> Escribí `/sdd-new` para arrancar. No hace falta que pegues nada — el skill toma el contexto de la conversación automáticamente.
+
+**No intentes invocar el skill automáticamente** (tiene `disable-model-invocation`). El usuario lo inicia manualmente.
