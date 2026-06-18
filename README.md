@@ -195,6 +195,22 @@ Verificá que estén activos:
 claude mcp list
 ```
 
+## 3. Instalar los skills de Claude Code
+
+Los comandos `/pm-analize` y `/pm-search-ticket` son skills de Claude Code incluidos en este repo. Para activarlos copiá el plugin a tu directorio de skills:
+
+```bash
+cp -r .claude/skills/pm ~/.claude/skills/pm
+```
+
+Luego reiniciá Claude Code o ejecutá `/reload-plugins`. Verificá que esté cargado:
+
+```bash
+claude plugin list
+```
+
+Deberías ver `pm@skills-dir` con status `loaded`.
+
 ---
 
 # Cómo obtener las credenciales
