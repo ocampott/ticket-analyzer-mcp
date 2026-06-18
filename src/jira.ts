@@ -1,4 +1,5 @@
 import { HttpError, withRetry } from "./retry.js";
+import { getJiraCustomFields } from "./fields.js";
 
 export interface JiraImage {
   name: string;
@@ -24,6 +25,10 @@ export interface JiraIssueResult {
   description: string;
   comments: JiraComment[];
   attachments: { name: string; mimeType: string; url: string }[];
+  subtasks: { key: string; summary: string; status: string }[];
+  parent: { key: string; summary: string } | null;
+  sprint: string | null;
+  epic: string | null;
 }
 
 export interface JiraIssueData {
@@ -124,6 +129,23 @@ export function adfToText(node: any): string {
   }
 }
 
+function extractSprint(raw: unknown): string | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const active = (raw as { name?: string; state?: string }[]).find(
+    (s) => s.state === "active"
+  );
+  const sprint = active ?? (raw as { name?: string }[])[raw.length - 1];
+  return typeof sprint?.name === "string" ? sprint.name : null;
+}
+
+function extractEpic(raw: unknown): string | null {
+  if (typeof raw === "string") return raw || null;
+  if (raw && typeof raw === "object" && "name" in raw) {
+    return String((raw as { name: string }).name) || null;
+  }
+  return null;
+}
+
 interface RawComment {
   author: { displayName: string };
   created: string;
@@ -150,6 +172,9 @@ interface JiraIssueRaw {
     description?: unknown;
     comment?: Omit<RawCommentsPage, "startAt">;
     attachment?: { id: string; filename: string; mimeType: string; content: string }[];
+    subtasks?: { key: string; fields: { summary: string; status: { name: string } } }[];
+    parent?: { key: string; fields: { summary: string } } | null;
+    [key: string]: unknown;
   };
 }
 
@@ -204,8 +229,23 @@ async function fetchAllComments(
   issueKey: string,
   baseUrl: string,
   authHeader: string,
-  initial: Omit<RawCommentsPage, "startAt">
+  initial: Omit<RawCommentsPage, "startAt">,
+  maxComments?: number
 ): Promise<RawComment[]> {
+  if (maxComments !== undefined) {
+    if (initial.total <= initial.maxResults) {
+      // All comments are already in initial page — take the last N
+      return initial.comments.slice(Math.max(0, initial.comments.length - maxComments));
+    }
+    // Fetch only the page containing the most recent N comments
+    const startAt = Math.max(0, initial.total - maxComments);
+    const page = await fetchJira<RawCommentsPage>(
+      `${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment?startAt=${startAt}&maxResults=${maxComments}`,
+      authHeader
+    );
+    return page.comments;
+  }
+
   const all = [...initial.comments];
   if (initial.total <= initial.maxResults) return all;
 
@@ -223,14 +263,24 @@ async function fetchAllComments(
   return all;
 }
 
-export async function getJiraIssue(issueKey: string, includeImages = true): Promise<JiraIssueData> {
+export async function getJiraIssue(
+  issueKey: string,
+  includeImages = true,
+  maxComments?: number
+): Promise<JiraIssueData> {
   const { host, authHeader } = getCredentials();
   const baseUrl = `https://${host}`;
+  const { sprintField, epicField } = await getJiraCustomFields();
 
-  const fields = [
+  const staticFields = [
     "summary", "description", "status", "assignee",
-    "labels", "priority", "comment", "attachment", "issuetype", "components",
-  ].join(",");
+    "labels", "priority", "comment", "attachment",
+    "issuetype", "components", "subtasks", "parent",
+  ];
+  const dynamicFields = [sprintField, epicField].filter(
+    (f): f is string => f !== null
+  );
+  const fields = [...staticFields, ...dynamicFields].join(",");
 
   console.error(`[jira] GET issue ${issueKey}`);
   const raw = await fetchJira<JiraIssueRaw>(
@@ -241,7 +291,13 @@ export async function getJiraIssue(issueKey: string, includeImages = true): Prom
   const f = raw.fields;
 
   const initialComments = f.comment ?? { comments: [], total: 0, maxResults: 0 };
-  const allComments = await fetchAllComments(issueKey, baseUrl, authHeader, initialComments);
+  const allComments = await fetchAllComments(
+    issueKey,
+    baseUrl,
+    authHeader,
+    initialComments,
+    maxComments
+  );
 
   const comments: JiraComment[] = allComments.map((c) => ({
     author: c.author.displayName,
@@ -250,11 +306,14 @@ export async function getJiraIssue(issueKey: string, includeImages = true): Prom
   }));
 
   const rawAttachments = f.attachment ?? [];
-  const imageAttachments = rawAttachments.filter((a) => a.mimeType?.startsWith("image/"));
-  const nonImageAttachments = rawAttachments.filter((a) => !a.mimeType?.startsWith("image/"));
+  const imageAttachments = rawAttachments.filter((a) =>
+    a.mimeType?.startsWith("image/")
+  );
+  const nonImageAttachments = rawAttachments.filter(
+    (a) => !a.mimeType?.startsWith("image/")
+  );
 
   let images: JiraImage[] = [];
-
   if (includeImages) {
     const downloadedImages = await Promise.all(
       imageAttachments.map(async (a): Promise<JiraImage | null> => {
@@ -282,6 +341,16 @@ export async function getJiraIssue(issueKey: string, includeImages = true): Prom
       mimeType: a.mimeType,
       url: a.content,
     })),
+    subtasks: (f.subtasks ?? []).map((s) => ({
+      key: s.key,
+      summary: s.fields.summary,
+      status: s.fields.status.name,
+    })),
+    parent: f.parent
+      ? { key: f.parent.key, summary: f.parent.fields.summary }
+      : null,
+    sprint: sprintField ? extractSprint(f[sprintField]) : null,
+    epic: epicField ? extractEpic(f[epicField]) : null,
   };
 
   return { issue, images };
