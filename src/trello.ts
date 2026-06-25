@@ -71,7 +71,13 @@ export interface TrelloCardData {
 
 const TEXT_MIME_EXACT = new Set(["application/json", "application/sql", "application/xml"]);
 const TEXT_EXTENSIONS = new Set([".html", ".htm", ".sql", ".txt", ".md", ".json", ".csv", ".xml", ".yaml", ".yml"]);
-const MAX_TEXT_BYTES = 50_000;
+const MAX_TEXT_BYTES = 200_000;
+
+function stripHtmlNoise(content: string): string {
+  return content
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
+}
 
 export interface TextAttachment {
   name: string;
@@ -103,10 +109,12 @@ export async function downloadTextAttachment(
       console.error(`[trello] Text download failed: HTTP ${response.status} for ${url}`);
       return null;
     }
-    const text = await response.text();
+    let text = await response.text();
+    const ext = url.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
+    if (ext === "html" || ext === "htm") text = stripHtmlNoise(text);
     if (text.length > MAX_TEXT_BYTES) {
       return {
-        content: text.slice(0, MAX_TEXT_BYTES) + "\n[truncado: archivo excede 50 000 caracteres]",
+        content: text.slice(0, MAX_TEXT_BYTES) + "\n[truncado: archivo excede 200 000 caracteres]",
         truncated: true,
       };
     }

@@ -656,12 +656,23 @@ describe("downloadJiraText", () => {
     expect(s3Options).toBeUndefined();
   });
 
-  it("truncates content exceeding 50 000 characters", async () => {
-    mockFetch.mockResolvedValueOnce(makeTextResponse(200, "c".repeat(60_000)));
+  it("strips <style> and <script> from HTML attachments", async () => {
+    const html = "<style>body{color:red}</style><h1>Title</h1><script>alert(1)</script><p>Content</p>";
+    mockFetch.mockResolvedValueOnce(makeTextResponse(200, html));
+    const result = await downloadJiraText("https://jira.example.com/spec.html", authHeader);
+    expect(result).not.toBeNull();
+    expect(result!.content).not.toContain("<style>");
+    expect(result!.content).not.toContain("<script>");
+    expect(result!.content).toContain("<h1>Title</h1>");
+    expect(result!.content).toContain("<p>Content</p>");
+  });
+
+  it("truncates content exceeding 200 000 characters", async () => {
+    mockFetch.mockResolvedValueOnce(makeTextResponse(200, "c".repeat(210_000)));
     const result = await downloadJiraText("https://jira.example.com/att1", authHeader);
     expect(result!.truncated).toBe(true);
-    expect(result!.content).toContain("[truncado: archivo excede 50 000 caracteres]");
-    expect(result!.content.startsWith("c".repeat(50_000))).toBe(true);
+    expect(result!.content).toContain("[truncado: archivo excede 200 000 caracteres]");
+    expect(result!.content.startsWith("c".repeat(200_000))).toBe(true);
   });
 
   it("returns null on HTTP error", async () => {

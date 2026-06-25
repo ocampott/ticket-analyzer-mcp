@@ -452,14 +452,25 @@ describe("downloadTextAttachment", () => {
     expect(result!.truncated).toBe(false);
   });
 
-  it("truncates content exceeding 50 000 characters", async () => {
-    const longText = "a".repeat(60_000);
+  it("strips <style> and <script> from HTML attachments", async () => {
+    const html = "<style>body{color:red}</style><h1>Title</h1><script>alert(1)</script><p>Content</p>";
+    mockFetch.mockResolvedValueOnce(makeTextResponse(200, html));
+    const result = await downloadTextAttachment("https://trello.com/att1.html");
+    expect(result).not.toBeNull();
+    expect(result!.content).not.toContain("<style>");
+    expect(result!.content).not.toContain("<script>");
+    expect(result!.content).toContain("<h1>Title</h1>");
+    expect(result!.content).toContain("<p>Content</p>");
+  });
+
+  it("truncates content exceeding 200 000 characters", async () => {
+    const longText = "a".repeat(210_000);
     mockFetch.mockResolvedValueOnce(makeTextResponse(200, longText));
     const result = await downloadTextAttachment("https://trello.com/att1");
     expect(result).not.toBeNull();
     expect(result!.truncated).toBe(true);
-    expect(result!.content).toContain("[truncado: archivo excede 50 000 caracteres]");
-    expect(result!.content.startsWith("a".repeat(50_000))).toBe(true);
+    expect(result!.content).toContain("[truncado: archivo excede 200 000 caracteres]");
+    expect(result!.content.startsWith("a".repeat(200_000))).toBe(true);
   });
 
   it("returns null on HTTP error", async () => {
