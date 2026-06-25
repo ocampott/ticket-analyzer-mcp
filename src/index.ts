@@ -6,7 +6,7 @@ import {
   McpError,
   ErrorCode,
 } from "@modelcontextprotocol/sdk/types.js";
-import { getTrelloCard, TrelloCardResult, listTrelloCards, addTrelloComment } from "./trello.js";
+import { getTrelloCard, TrelloCardResult, listTrelloCards, addTrelloComment, TextAttachment } from "./trello.js";
 import { getJiraIssue, JiraIssueResult, searchJiraIssues, addJiraComment } from "./jira.js";
 import { getJiraCustomFields } from "./fields.js";
 
@@ -14,7 +14,19 @@ function formatDate(iso: string): string {
   return iso.slice(0, 10);
 }
 
-function formatCardAsMarkdown(card: TrelloCardResult, imageNames: string[]): string {
+function langHintFromName(name: string): string {
+  const dot = name.lastIndexOf(".");
+  if (dot === -1) return "";
+  const ext = name.slice(dot).toLowerCase();
+  const map: Record<string, string> = {
+    ".sql": "sql", ".html": "html", ".htm": "html",
+    ".json": "json", ".xml": "xml", ".csv": "csv",
+    ".md": "markdown", ".yaml": "yaml", ".yml": "yaml",
+  };
+  return map[ext] ?? "";
+}
+
+function formatCardAsMarkdown(card: TrelloCardResult, imageNames: string[], textAttachments: TextAttachment[]): string {
   const lines: string[] = [];
 
   lines.push(`# ${card.name}`);
@@ -60,6 +72,19 @@ function formatCardAsMarkdown(card: TrelloCardResult, imageNames: string[]): str
     lines.push(`## Adjuntos (${card.attachments.length})`);
     for (const att of card.attachments) {
       lines.push(`- ${att.name} (${att.mimeType})`);
+    }
+  }
+
+  if (textAttachments.length > 0) {
+    lines.push("");
+    lines.push(`## Contenido de adjuntos (${textAttachments.length})`);
+    for (const att of textAttachments) {
+      lines.push("");
+      lines.push(`### ${att.name}`);
+      const lang = langHintFromName(att.name);
+      lines.push(`\`\`\`${lang}`);
+      lines.push(att.content);
+      lines.push("```");
     }
   }
 
@@ -154,6 +179,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             max_comments: {
               type: "number",
               description: "Limit number of comments returned (most recent N). Default: no limit.",
+            },
+            include_text_attachments: {
+              type: "boolean",
+              description: "Download and include the content of text attachments (.html, .sql, .txt, .json, etc.) inline in the response. Default: false.",
             },
           },
           required: ["card_id"],
@@ -264,10 +293,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   if (name === "get_trello_card") {
-    const typedArgs = args as { card_id?: string; include_images?: boolean; max_comments?: number } | undefined;
+    const typedArgs = args as { card_id?: string; include_images?: boolean; max_comments?: number; include_text_attachments?: boolean } | undefined;
     const cardId = typedArgs?.card_id;
     const includeImages = typedArgs?.include_images ?? true;
     const maxComments = typedArgs?.max_comments;
+    const includeTextAttachments = typedArgs?.include_text_attachments ?? false;
 
     if (!cardId || typeof cardId !== "string") {
       throw new McpError(ErrorCode.InvalidParams, "card_id is required and must be a string");
@@ -276,9 +306,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     console.error(`[pm-mcp] Tool called: get_trello_card(${cardId})`);
 
     try {
-      const { card, images } = await getTrelloCard(cardId, includeImages, maxComments);
+      const { card, images, textAttachments } = await getTrelloCard(cardId, includeImages, maxComments, includeTextAttachments);
       console.error(
-        `[pm-mcp] Success: card "${card.name}", ${card.comments.length} comment(s), ${images.length} image(s)`
+        `[pm-mcp] Success: card "${card.name}", ${card.comments.length} comment(s), ${images.length} image(s), ${textAttachments.length} text attachment(s)`
       );
 
       const imageNames = images.map((img) => img.name);
@@ -286,7 +316,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const content: Array<
         | { type: "text"; text: string }
         | { type: "image"; data: string; mimeType: string }
-      > = [{ type: "text", text: formatCardAsMarkdown(card, imageNames) }];
+      > = [{ type: "text", text: formatCardAsMarkdown(card, imageNames, textAttachments) }];
 
       for (const img of images) {
         content.push({ type: "text", text: `[Imagen: ${img.name}]` });
