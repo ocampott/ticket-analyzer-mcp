@@ -1,13 +1,9 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "pm",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "PM tools for analyzing and searching Trello cards and Jira issues inside Claude Code",
   "author": {
     "name": "ocampott"
-  },
-  "skills": [
-    "./skills/pm-analize",
-    "./skills/pm-search-ticket"
-  ]
+  }
 }

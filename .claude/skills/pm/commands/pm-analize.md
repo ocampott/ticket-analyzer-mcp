@@ -1,5 +1,4 @@
 ---
-name: pm-analize
 description: Analyze a PM ticket (Trello card or Jira issue) by ID. Auto-detects platform from ID format.
 ---
 

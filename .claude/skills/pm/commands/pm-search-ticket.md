@@ -1,5 +1,4 @@
 ---
-name: pm-search-ticket
 description: Search Jira or Trello tickets using natural language. Usage: /pm-search-ticket [jira|trello] [free query]
 ---
 

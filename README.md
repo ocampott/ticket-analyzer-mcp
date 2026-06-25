@@ -62,6 +62,16 @@ Busca tickets en lenguaje natural, muestra una lista numerada y te deja elegir c
 
 Para Jira, Claude traduce el query a JQL automáticamente.
 
+## /pm-update
+
+Actualiza pm-mcp a la última versión sin salir de Claude Code:
+
+```text
+/pm-update
+```
+
+Detecta automáticamente dónde está instalado el repo, hace `git pull`, reconstruye y reinstala los comandos. Pedirá que reinicies Claude Code al terminar.
+
 ---
 
 # ¿Por qué existe?
