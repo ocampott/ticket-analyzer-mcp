@@ -229,6 +229,60 @@ describe("getTrelloCard", () => {
     expect(result.comments[0].text).toBe("First");
     expect(result.comments[1].text).toBe("Second");
   });
+
+  it("returns empty textAttachments when includeTextAttachments is false (default)", async () => {
+    const card: TrelloCard = {
+      name: "Card",
+      desc: "",
+      actions: [],
+      attachments: [
+        { id: "att1", name: "schema.sql", url: "https://trello.com/att1", mimeType: "application/sql", isUpload: true, bytes: 100 },
+      ],
+    };
+    mockFetch.mockResolvedValueOnce(makeResponse(200, card));
+
+    const { textAttachments } = await getTrelloCard("abc123", false);
+    expect(textAttachments).toEqual([]);
+    expect(mockFetch).toHaveBeenCalledTimes(1); // no download
+  });
+
+  it("downloads and returns text attachments when includeTextAttachments is true", async () => {
+    const card: TrelloCard = {
+      name: "Card",
+      desc: "",
+      actions: [],
+      attachments: [
+        { id: "att1", name: "schema.sql", url: "https://trello.com/att1", mimeType: "application/sql", isUpload: true, bytes: 100 },
+      ],
+    };
+    mockFetch
+      .mockResolvedValueOnce(makeResponse(200, card))
+      .mockResolvedValueOnce(makeTextResponse(200, "CREATE TABLE foo (id INT);"));
+
+    const { textAttachments } = await getTrelloCard("abc123", false, undefined, true);
+    expect(textAttachments).toHaveLength(1);
+    expect(textAttachments[0].name).toBe("schema.sql");
+    expect(textAttachments[0].mimeType).toBe("application/sql");
+    expect(textAttachments[0].content).toBe("CREATE TABLE foo (id INT);");
+    expect(textAttachments[0].truncated).toBe(false);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("text attachments still appear in card.attachments regardless of includeTextAttachments", async () => {
+    const card: TrelloCard = {
+      name: "Card",
+      desc: "",
+      actions: [],
+      attachments: [
+        { id: "att1", name: "schema.sql", url: "https://trello.com/att1", mimeType: "application/sql", isUpload: true, bytes: 100 },
+      ],
+    };
+    mockFetch.mockResolvedValueOnce(makeResponse(200, card));
+
+    const { card: result } = await getTrelloCard("abc123", false);
+    expect(result.attachments).toHaveLength(1);
+    expect(result.attachments[0].name).toBe("schema.sql");
+  });
 });
 
 describe("listTrelloCards", () => {

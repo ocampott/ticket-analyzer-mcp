@@ -66,6 +66,7 @@ export interface TrelloCardResult {
 export interface TrelloCardData {
   card: TrelloCardResult;
   images: TrelloImage[];
+  textAttachments: TextAttachment[];
 }
 
 const TEXT_MIME_EXACT = new Set(["application/json", "application/sql", "application/xml"]);
@@ -188,7 +189,8 @@ export async function downloadImage(url: string): Promise<string | null> {
 export async function getTrelloCard(
   cardId: string,
   includeImages = true,
-  maxComments?: number
+  maxComments?: number,
+  includeTextAttachments = false
 ): Promise<TrelloCardData> {
   const { apiKey, token } = getCredentials();
   const url = `https://api.trello.com/1/cards/${cardId}?fields=name,desc,due,labels&members=true&member_fields=fullName&checklists=all&list=true&list_fields=name&actions=commentCard&actions_limit=1000&attachments=true&attachment_fields=name,url,mimeType,isUpload,bytes&key=${apiKey}&token=${token}`;
@@ -226,6 +228,21 @@ export async function getTrelloCard(
     images = downloadedImages.filter((img): img is TrelloImage => img !== null);
   }
 
+  let textAttachments: TextAttachment[] = [];
+  if (includeTextAttachments) {
+    const textCandidates = nonImageAttachments.filter((a) =>
+      isTextAttachment(a.name, a.mimeType ?? "")
+    );
+    const downloaded = await Promise.all(
+      textCandidates.map(async (a): Promise<TextAttachment | null> => {
+        const result = await downloadTextAttachment(a.url);
+        if (!result) return null;
+        return { name: a.name, mimeType: a.mimeType, content: result.content, truncated: result.truncated };
+      })
+    );
+    textAttachments = downloaded.filter((t): t is TextAttachment => t !== null);
+  }
+
   return {
     card: {
       name: card.name,
@@ -256,6 +273,7 @@ export async function getTrelloCard(
       })),
     },
     images,
+    textAttachments,
   };
 }
 
