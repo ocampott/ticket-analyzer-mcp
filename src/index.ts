@@ -96,7 +96,7 @@ function formatCardAsMarkdown(card: TrelloCardResult, imageNames: string[], text
   return lines.join("\n");
 }
 
-function formatIssueAsMarkdown(issue: JiraIssueResult, imageNames: string[]): string {
+function formatIssueAsMarkdown(issue: JiraIssueResult, imageNames: string[], textAttachments: TextAttachment[]): string {
   const lines: string[] = [];
 
   lines.push(`# [${issue.key}] ${issue.summary}`);
@@ -143,6 +143,19 @@ function formatIssueAsMarkdown(issue: JiraIssueResult, imageNames: string[]): st
     lines.push(`## Adjuntos (${issue.attachments.length})`);
     for (const att of issue.attachments) {
       lines.push(`- ${att.name} (${att.mimeType})`);
+    }
+  }
+
+  if (textAttachments.length > 0) {
+    lines.push("");
+    lines.push(`## Contenido de adjuntos (${textAttachments.length})`);
+    for (const att of textAttachments) {
+      lines.push("");
+      lines.push(`### ${att.name}`);
+      const lang = langHintFromName(att.name);
+      lines.push(`\`\`\`${lang}`);
+      lines.push(att.content);
+      lines.push("```");
     }
   }
 
@@ -205,6 +218,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             max_comments: {
               type: "number",
               description: "Limit number of comments returned (most recent N). Default: no limit.",
+            },
+            include_text_attachments: {
+              type: "boolean",
+              description: "Download and include the content of text attachments (.html, .sql, .txt, .json, etc.) inline in the response. Default: false.",
             },
           },
           required: ["issue_key"],
@@ -332,10 +349,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   if (name === "get_jira_issue") {
-    const typedArgs = args as { issue_key?: string; include_images?: boolean; max_comments?: number } | undefined;
+    const typedArgs = args as { issue_key?: string; include_images?: boolean; max_comments?: number; include_text_attachments?: boolean } | undefined;
     const issueKey = typedArgs?.issue_key;
     const includeImages = typedArgs?.include_images ?? true;
     const maxComments = typedArgs?.max_comments;
+    const includeTextAttachments = typedArgs?.include_text_attachments ?? false;
 
     if (!issueKey || typeof issueKey !== "string") {
       throw new McpError(ErrorCode.InvalidParams, "issue_key is required and must be a string");
@@ -344,9 +362,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     console.error(`[pm-mcp] Tool called: get_jira_issue(${issueKey})`);
 
     try {
-      const { issue, images } = await getJiraIssue(issueKey, includeImages, maxComments);
+      const { issue, images, textAttachments } = await getJiraIssue(issueKey, includeImages, maxComments, includeTextAttachments);
       console.error(
-        `[pm-mcp] Success: issue "${issue.key}", ${issue.comments.length} comment(s), ${images.length} image(s)`
+        `[pm-mcp] Success: issue "${issue.key}", ${issue.comments.length} comment(s), ${images.length} image(s), ${textAttachments.length} text attachment(s)`
       );
 
       const imageNames = images.map((img) => img.name);
@@ -354,7 +372,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const content: Array<
         | { type: "text"; text: string }
         | { type: "image"; data: string; mimeType: string }
-      > = [{ type: "text", text: formatIssueAsMarkdown(issue, imageNames) }];
+      > = [{ type: "text", text: formatIssueAsMarkdown(issue, imageNames, textAttachments) }];
 
       for (const img of images) {
         content.push({ type: "text", text: `[Imagen: ${img.name}]` });
