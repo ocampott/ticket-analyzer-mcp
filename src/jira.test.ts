@@ -4,7 +4,7 @@ import { jest } from "@jest/globals";
 const mockFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
 global.fetch = mockFetch as typeof fetch;
 
-import { adfToText, getJiraIssue, searchJiraIssues, addJiraComment } from "./jira.js";
+import { adfToText, getJiraIssue, searchJiraIssues, addJiraComment, isTextAttachment, downloadJiraText } from "./jira.js";
 import { resetFieldCache } from "./fields.js";
 
 function makeResponse(status: number, body: unknown): Response {
@@ -15,6 +15,16 @@ function makeResponse(status: number, body: unknown): Response {
     json: async () => body,
     headers: new Headers(),
     arrayBuffer: async () => new ArrayBuffer(0),
+  } as unknown as Response;
+}
+
+function makeTextResponse(status: number, body: string): Response {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: status === 200 ? "OK" : "Error",
+    text: async () => body,
+    headers: new Headers(),
   } as unknown as Response;
 }
 
@@ -517,5 +527,89 @@ describe("addJiraComment", () => {
   it("throws on API error", async () => {
     mockFetch.mockResolvedValueOnce(makeResponse(400, {}));
     await expect(addJiraComment("PROJ-1", "text")).rejects.toThrow("Jira comment failed: HTTP 400");
+  });
+});
+
+describe("isTextAttachment (jira)", () => {
+  it("detects text/html mimeType", () => {
+    expect(isTextAttachment("page.html", "text/html")).toBe(true);
+  });
+  it("detects application/sql mimeType", () => {
+    expect(isTextAttachment("schema.sql", "application/sql")).toBe(true);
+  });
+  it("falls back to .sql extension", () => {
+    expect(isTextAttachment("schema.sql", "application/octet-stream")).toBe(true);
+  });
+  it("returns false for .pdf", () => {
+    expect(isTextAttachment("doc.pdf", "application/pdf")).toBe(false);
+  });
+  it("returns false for image/png", () => {
+    expect(isTextAttachment("photo.png", "image/png")).toBe(false);
+  });
+});
+
+describe("downloadJiraText", () => {
+  const OLD_ENV = process.env;
+  const authHeader = `Basic ${Buffer.from("user@example.com:test-token").toString("base64")}`;
+
+  beforeEach(() => {
+    process.env = {
+      ...OLD_ENV,
+      JIRA_HOST: "mycompany.atlassian.net",
+      JIRA_EMAIL: "user@example.com",
+      JIRA_API_TOKEN: "test-token",
+    };
+    mockFetch.mockReset();
+  });
+
+  afterAll(() => {
+    process.env = OLD_ENV;
+  });
+
+  it("returns text content when download succeeds (direct, no redirect)", async () => {
+    mockFetch.mockResolvedValueOnce(makeTextResponse(200, "SELECT * FROM orders;"));
+    const result = await downloadJiraText("https://jira.example.com/att1", authHeader);
+    expect(result).not.toBeNull();
+    expect(result!.content).toBe("SELECT * FROM orders;");
+    expect(result!.truncated).toBe(false);
+  });
+
+  it("follows 302 redirect and downloads text (no auth forwarded to S3)", async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 302,
+        headers: new Headers({ location: "https://s3.example.com/file.sql" }),
+        text: async () => "",
+      } as unknown as Response)
+      .mockResolvedValueOnce(makeTextResponse(200, "SELECT 1;"));
+
+    const result = await downloadJiraText("https://jira.example.com/att1", authHeader);
+    expect(result).not.toBeNull();
+    expect(result!.content).toBe("SELECT 1;");
+    // second fetch must NOT include Authorization header (plain S3 URL)
+    const [s3Url, s3Options] = mockFetch.mock.calls[1] as [string, RequestInit | undefined];
+    expect(s3Url).toBe("https://s3.example.com/file.sql");
+    expect(s3Options).toBeUndefined();
+  });
+
+  it("truncates content exceeding 50 000 characters", async () => {
+    mockFetch.mockResolvedValueOnce(makeTextResponse(200, "c".repeat(60_000)));
+    const result = await downloadJiraText("https://jira.example.com/att1", authHeader);
+    expect(result!.truncated).toBe(true);
+    expect(result!.content).toContain("[truncado: archivo excede 50 000 caracteres]");
+    expect(result!.content.startsWith("c".repeat(50_000))).toBe(true);
+  });
+
+  it("returns null on HTTP error", async () => {
+    mockFetch.mockResolvedValueOnce(makeTextResponse(403, "Forbidden"));
+    const result = await downloadJiraText("https://jira.example.com/att1", authHeader);
+    expect(result).toBeNull();
+  });
+
+  it("returns null on network error", async () => {
+    mockFetch.mockRejectedValueOnce(new Error("Network error"));
+    const result = await downloadJiraText("https://jira.example.com/att1", authHeader);
+    expect(result).toBeNull();
   });
 });

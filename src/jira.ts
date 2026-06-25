@@ -36,6 +36,71 @@ export interface JiraIssueData {
   images: JiraImage[];
 }
 
+const TEXT_MIME_EXACT = new Set(["application/json", "application/sql", "application/xml"]);
+const TEXT_EXTENSIONS = new Set([".html", ".htm", ".sql", ".txt", ".md", ".json", ".csv", ".xml", ".yaml", ".yml"]);
+const MAX_TEXT_BYTES = 50_000;
+
+export interface TextAttachment {
+  name: string;
+  mimeType: string;
+  content: string;
+  truncated: boolean;
+}
+
+export function isTextAttachment(name: string, mimeType: string): boolean {
+  if (mimeType.startsWith("text/")) return true;
+  if (TEXT_MIME_EXACT.has(mimeType)) return true;
+  const dot = name.lastIndexOf(".");
+  if (dot === -1) return false;
+  return TEXT_EXTENSIONS.has(name.slice(dot).toLowerCase());
+}
+
+export async function downloadJiraText(
+  url: string,
+  authHeader: string
+): Promise<{ content: string; truncated: boolean } | null> {
+  console.error(`[jira] Downloading text attachment: ${url}`);
+  try {
+    const initialResponse = await fetch(url, {
+      headers: { Authorization: authHeader },
+      redirect: "manual",
+    });
+
+    let finalResponse: Response;
+    const status = initialResponse.status;
+    if (status === 301 || status === 302 || status === 307 || status === 308) {
+      const location = initialResponse.headers.get("location");
+      if (!location) {
+        console.error(`[jira] Text redirect without Location header: ${url}`);
+        return null;
+      }
+      finalResponse = await fetch(location);
+    } else if (initialResponse.ok) {
+      finalResponse = initialResponse;
+    } else {
+      console.error(`[jira] Text download failed: HTTP ${status}`);
+      return null;
+    }
+
+    if (!finalResponse.ok) {
+      console.error(`[jira] Text download failed: HTTP ${finalResponse.status}`);
+      return null;
+    }
+
+    const text = await finalResponse.text();
+    if (text.length > MAX_TEXT_BYTES) {
+      return {
+        content: text.slice(0, MAX_TEXT_BYTES) + "\n[truncado: archivo excede 50 000 caracteres]",
+        truncated: true,
+      };
+    }
+    return { content: text, truncated: false };
+  } catch (err) {
+    console.error(`[jira] Text download error for ${url}:`, err);
+    return null;
+  }
+}
+
 function getCredentials(): { host: string; authHeader: string } {
   const host = process.env.JIRA_HOST;
   const email = process.env.JIRA_EMAIL;
