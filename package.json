@@ -4,10 +4,21 @@
   "description": "MCP server to read Trello cards and Jira issues",
   "type": "module",
   "main": "dist/index.js",
+  "bin": {
+    "pm-mcp": "bin/pm-mcp.js"
+  },
+  "files": [
+    "dist/",
+    "bin/",
+    "skills/",
+    ".claude-plugin/",
+    ".mcp.json"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "NODE_OPTIONS='--experimental-vm-modules' jest"
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0"

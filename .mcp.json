@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "pm": {
+      "command": "npx",
+      "args": ["-y", "pm-mcp@latest"]
+    }
+  }
+}

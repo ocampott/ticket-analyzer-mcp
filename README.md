@@ -30,8 +30,11 @@ Claude puede leer directamente:
 * checklists (ítems pendientes y completados)
 * labels con colores (`red: Blocker`, `yellow: Importante`)
 * asignados, fechas de vencimiento
-* adjuntos e imágenes (opcional)
+* imágenes adjuntas (opcional — útil para wireframes y mockups)
+* archivos de texto adjuntos: `.html`, `.sql`, `.txt`, `.json`, etc. (opcional)
 * subtareas, issue padre, sprint y épica (Jira)
+
+Los adjuntos de texto se descargan y se incluyen en el análisis con resaltado de sintaxis. Los HTML se procesan automáticamente para eliminar CSS y JS antes de pasarlos al modelo.
 
 ---
 
@@ -163,6 +166,42 @@ npm install -g @anthropic-ai/claude-code
 
 # Instalación
 
+## Instalación rápida (Plugin)
+
+La forma más rápida de instalar pm-mcp es como plugin de Claude Code.
+
+### 1. Agregar el marketplace privado
+
+Mientras pm-mcp no esté en el marketplace oficial de Anthropic, primero registrá el source:
+
+```bash
+claude plugin marketplace add pm --source github --repo ocampott/pm-mcp
+```
+
+> Una vez que pm-mcp esté en el marketplace oficial de Anthropic, este paso no será necesario.
+
+### 2. Instalar el plugin
+
+```bash
+claude plugin install pm-mcp
+```
+
+### 3. Configurar credenciales
+
+Ejecutá el wizard de configuración dentro de Claude Code:
+
+```text
+/pm-setup
+```
+
+El wizard te guía para ingresar tus credenciales de Jira y/o Trello y verifica que la conexión funcione.
+
+---
+
+## Alternativa: Instalación manual
+
+Si preferís instalar pm-mcp manualmente o tener más control sobre la configuración, seguí los pasos a continuación.
+
 ## 1. Clonar el repositorio
 
 ```bash
@@ -207,7 +246,7 @@ claude mcp list
 
 ## 3. Instalar los skills de Claude Code
 
-Los comandos `/pm-analize` y `/pm-search-ticket` son skills de Claude Code incluidos en este repo. Para activarlos copiá el plugin a tu directorio de skills:
+Los comandos `/pm-analize`, `/pm-search-ticket` y `/pm-update` son skills de Claude Code incluidos en este repo. Para activarlos copiá el plugin a tu directorio de skills:
 
 ```bash
 cp -r .claude/skills/pm ~/.claude/skills/pm
@@ -369,6 +408,12 @@ No. Claude puede leerlo directamente usando las herramientas MCP.
 ## ¿Claude analiza imágenes?
 
 Sí. Si la tarjeta tiene wireframes, mockups, screenshots o diagramas adjuntos, Claude puede analizarlos junto con el resto del ticket.
+
+## ¿Claude puede leer archivos adjuntos de texto?
+
+Sí. Si la tarjeta tiene adjuntos `.html`, `.sql`, `.txt`, `.json`, `.csv`, `.xml` u otros archivos de texto, Claude puede descargar su contenido e incluirlo en el análisis. Útil cuando los requisitos están en un HTML o hay queries SQL adjuntos como parte del ticket.
+
+Al usar `/pm-analize`, Claude te pregunta si querés incluir imágenes y/o archivos de texto antes de leer el ticket. Los HTML se procesan automáticamente para eliminar CSS y JS, y hay un límite de 200.000 caracteres por archivo para no saturar el contexto.
 
 ## ¿Puedo dejar que Claude comente en el ticket?
 

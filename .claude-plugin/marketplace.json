@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "pm-mcp",
+  "description": "Connect Claude Code to Trello and Jira. Fetch tickets, analyze them in the context of your codebase, and get implementation plans.",
+  "owner": {
+    "name": "Tomás Ocampo",
+    "email": "tomas@xoolix.com"
+  },
+  "plugins": [
+    {
+      "name": "pm",
+      "description": "PM tools for analyzing and searching Trello cards and Jira issues inside Claude Code",
+      "version": "1.2.0",
+      "source": "./"
+    }
+  ]
+}
