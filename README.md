@@ -8,7 +8,7 @@ No more copy-pasting tickets into the chat. No more asking Claude to explore the
 
 ## What it does
 
-Exposes six MCP tools to Claude:
+Exposes seven MCP tools to Claude:
 
 | Tool | Description |
 |------|-------------|
@@ -18,6 +18,7 @@ Exposes six MCP tools to Claude:
 | `search_jira_issues` | Search issues with natural language (auto-translated to JQL) |
 | `add_trello_comment` | Post a comment on a Trello card |
 | `add_jira_comment` | Post a comment on a Jira issue |
+| `get_status` | Check which integrations are configured and connected |
 
 Claude can also read image attachments (wireframes, mockups) and text attachments (`.html`, `.sql`, `.txt`, `.json`) directly from the ticket — it asks before fetching to keep token usage in check.
 
@@ -35,6 +36,7 @@ Once installed, use these skills inside Claude Code:
 /ticket-analyzer:search trello cards in "In Progress" about payments
 
 /ticket-analyzer:setup                  # Configure credentials (first-time wizard)
+/ticket-analyzer:status                 # Check which accounts are connected
 /ticket-analyzer:update                 # Update to the latest version
 ```
 
