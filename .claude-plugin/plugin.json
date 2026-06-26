@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "ticket-analyzer",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "PM tools for analyzing and searching Trello cards and Jira issues inside Claude Code",
   "author": {
     "name": "ocampott"
