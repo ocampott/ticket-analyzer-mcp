@@ -315,7 +315,7 @@ describe("getJiraIssue", () => {
 
   it("throws when credentials are missing", async () => {
     delete process.env.JIRA_HOST;
-    await expect(getJiraIssue("PROJ-1")).rejects.toThrow("Missing Jira credentials");
+    await expect(getJiraIssue("PROJ-1")).rejects.toThrow("Jira credentials not configured");
   });
 
   it("maps subtasks from fields", async () => {
@@ -554,7 +554,7 @@ describe("searchJiraIssues", () => {
 
   it("throws when credentials are missing", async () => {
     delete process.env.JIRA_HOST;
-    await expect(searchJiraIssues("project = PROJ")).rejects.toThrow("Missing Jira credentials");
+    await expect(searchJiraIssues("project = PROJ")).rejects.toThrow("Jira credentials not configured");
   });
 });
 

@@ -113,9 +113,9 @@ describe("getTrelloCard", () => {
     await expect(getTrelloCard("any-id")).rejects.toThrow("Trello API error: HTTP 500");
   });
 
-  it("throws 'Missing Trello credentials' when env vars missing", async () => {
+  it("throws when credentials are missing", async () => {
     delete process.env.TRELLO_API_KEY;
-    await expect(getTrelloCard("any-id")).rejects.toThrow("Missing Trello credentials");
+    await expect(getTrelloCard("any-id")).rejects.toThrow("Trello credentials not configured");
   });
 
   it("skips image download when includeImages is false", async () => {
