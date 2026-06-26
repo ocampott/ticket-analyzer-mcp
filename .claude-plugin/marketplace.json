@@ -10,7 +10,7 @@
     {
       "name": "pm",
       "description": "PM tools for analyzing and searching Trello cards and Jira issues inside Claude Code",
-      "version": "1.2.0",
+      "version": "1.2.1",
       "source": "./"
     }
   ]
