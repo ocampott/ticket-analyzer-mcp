@@ -10,7 +10,7 @@
     {
       "name": "ticket-analyzer",
       "description": "PM tools for analyzing and searching Trello cards and Jira issues inside Claude Code",
-      "version": "1.2.2",
+      "version": "1.2.3",
       "source": "./"
     }
   ]
