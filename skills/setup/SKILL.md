@@ -1,8 +1,8 @@
 ---
-description: Set up pm-mcp credentials interactively. Wizard for configuring Trello and/or Jira integrations.
+description: Set up ticket-analyzer credentials interactively. Wizard for configuring Trello and/or Jira integrations.
 ---
 
-You are running the pm-mcp setup wizard. Guide the user step by step through credential configuration.
+You are running the ticket-analyzer setup wizard. Guide the user step by step through credential configuration.
 
 ## Step 1 — Check Node Version
 
@@ -14,7 +14,7 @@ node --version
 Parse the version number (e.g. `v18.12.0` → major = 18).
 
 If major < 18:
-> "pm-mcp requiere Node.js 18 o superior. Tu versión actual es [version]. Descargá la última LTS desde https://nodejs.org y volvé a intentarlo."
+> "ticket-analyzer requiere Node.js 18 o superior. Tu versión actual es [version]. Descargá la última LTS desde https://nodejs.org y volvé a intentarlo."
 
 Then STOP — do not continue.
 
@@ -30,7 +30,7 @@ claude mcp list 2>/dev/null
 Scan the output for MCP server names that match any of: `trello`, `jira`, `pm-mcp`, `pm_mcp`.
 
 If legacy entries are found, tell the user:
-> "Encontré instalaciones manuales anteriores de pm-mcp: [list names]. Estas pueden entrar en conflicto con la instalación via plugin."
+> "Encontré instalaciones manuales anteriores de ticket-analyzer: [list names]. Estas pueden entrar en conflicto con la instalación via plugin."
 
 Then ask (AskUserQuestion with selectable options):
 > "¿Querés eliminar estas instalaciones manuales antes de continuar?"
@@ -115,7 +115,7 @@ After registering, test the connection by calling a lightweight MCP tool:
 - **If only Trello was configured**: call `get_trello_card` with a placeholder ID. Same — any response (including error) that comes from the server proves connectivity.
 
 **If the tool call succeeds or returns an expected API error (404, issue not found, card not found):**
-> "Conexión verificada. pm-mcp está listo."
+> "Conexión verificada. ticket-analyzer está listo."
 
 **If the tool call returns a credential/auth error:**
 
@@ -130,13 +130,13 @@ Then tell the user:
 Then loop back to **Step 4** to re-collect credentials (do NOT exit the wizard).
 
 **If the tool is not found / server didn't start:**
-> "El servidor MCP no respondió. Reiniciá Claude Code y ejecutá `/pm-setup` de nuevo."
+> "El servidor MCP no respondió. Reiniciá Claude Code y ejecutá `/ticket-analyzer:setup` de nuevo."
 
 ---
 
 ## Step 7 — Confirm and Summarize
 
 Tell the user:
-> "Setup completado. Integraciones configuradas: [list]. Podés usar `/pm-analize [ID]` para analizar tickets o `/pm-search-ticket [jira|trello] [query]` para buscar."
+> "Setup completado. Integraciones configuradas: [list]. Podés usar `/ticket-analyzer:analize [ID]` para analizar tickets o `/ticket-analyzer:search [jira|trello] [query]` para buscar."
 
 If there were any errors that were not resolved, list them clearly so the user knows what to fix manually.

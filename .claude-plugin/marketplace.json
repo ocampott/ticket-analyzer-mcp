@@ -8,9 +8,9 @@
   },
   "plugins": [
     {
-      "name": "pm",
+      "name": "ticket-analyzer",
       "description": "PM tools for analyzing and searching Trello cards and Jira issues inside Claude Code",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "source": "./"
     }
   ]

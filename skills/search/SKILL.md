@@ -1,5 +1,5 @@
 ---
-description: Search Jira or Trello tickets using natural language. Usage: /pm-search-ticket [jira|trello] [free query]
+description: Search Jira or Trello tickets using natural language. Usage: /ticket-analyzer:search [jira|trello] [free query]
 ---
 
 The user wants to search PM tickets. Input received: **{{args}}**
@@ -11,7 +11,7 @@ Split `{{args}}`:
 - **Everything after** = the free-text query
 
 If the platform word is missing or not `jira`/`trello`, reply:
-> "Usá `/pm-search-ticket jira [query]` o `/pm-search-ticket trello [query]`."
+> "Usá `/ticket-analyzer:search jira [query]` o `/ticket-analyzer:search trello [query]`."
 Then stop.
 
 ---
@@ -43,7 +43,7 @@ Combine fragments with `AND`. Example: `"tickets del sprint actual en doing sobr
 
 **4. Ask:** "¿Querés analizar alguno? Escribí el número o el key."
 
-**5. When the user replies**, run the full analysis workflow from CLAUDE.md (Pasos 1–9) with that issue key, as if the user had called `/pm-analize [key]`.
+**5. When the user replies**, run the full analysis workflow from CLAUDE.md (Pasos 1–9) with that issue key, as if the user had called `/ticket-analyzer:analize [key]`.
 
 ---
 
