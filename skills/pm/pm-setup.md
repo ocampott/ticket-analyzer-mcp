@@ -83,10 +83,10 @@ Build the `claude mcp add` command based on the credentials collected.
 
 **Template:**
 ```bash
-claude mcp add pm-mcp \
+claude mcp add pm \
   --transport stdio \
   --env KEY=VALUE \
-  -- npx pm-mcp@latest
+  -- npx ticket-analyzer-mcp@latest
 ```
 
 Add only the env vars for the integrations the user chose:
@@ -97,9 +97,13 @@ Run the command. Report success or failure.
 
 If it fails with "already exists":
 ```bash
-claude mcp remove pm-mcp
+claude mcp remove pm
 ```
 Then retry the `claude mcp add` command.
+
+> **Nota de seguridad:** Las credenciales pasadas con `--env` quedan visibles en el historial de shell. Si querés limpiarlas, ejecutá `history -d $(history 1)` (zsh/bash) después del setup.
+
+> **Nota:** Si Claude Code no detecta el server tras el setup, puede que sea necesario reiniciar Claude Code para que cargue el nuevo MCP.
 
 ---
 
@@ -114,7 +118,16 @@ After registering, test the connection by calling a lightweight MCP tool:
 > "Conexión verificada. pm-mcp está listo."
 
 **If the tool call returns a credential/auth error:**
-> "Hubo un error de autenticación: [error message]. Verificá las credenciales e intentá de nuevo con `/pm-setup`."
+
+Remove the already-saved (invalid) MCP entry so no bad credentials persist:
+```bash
+claude mcp remove pm
+```
+
+Then tell the user:
+> "Hubo un error de autenticación: [error message]. Las credenciales ingresadas no son válidas — no se guardó nada. Vamos a pedirte las credenciales de nuevo."
+
+Then loop back to **Step 4** to re-collect credentials (do NOT exit the wizard).
 
 **If the tool is not found / server didn't start:**
 > "El servidor MCP no respondió. Reiniciá Claude Code y ejecutá `/pm-setup` de nuevo."

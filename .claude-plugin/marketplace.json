@@ -1,6 +1,6 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "pm-mcp",
+  "name": "ticket-analyzer-mcp",
   "description": "Connect Claude Code to Trello and Jira. Fetch tickets, analyze them in the context of your codebase, and get implementation plans.",
   "owner": {
     "name": "Tomás Ocampo",

@@ -31,3 +31,11 @@
 - [x] Verificar `npm pack` incluye archivos correctos — done when: tarball contiene `dist/`, `bin/`, `skills/`, `.claude-plugin/` y no incluye `src/` ni `.claude/`
 - [x] Test happy path completo — MANUAL-PENDING: `claude plugin` subcommand exists and `install` command is available; full test (`claude plugin install pm-mcp` + `/pm-setup`) requires package to be published to npm first; see decisions.md
 - [x] Actualizar README con instrucciones de instalación via plugin — done when: sección "Instalación" muestra ambos métodos (plugin y manual), el método plugin es el primario
+
+## Fix Cycle 1
+
+- [x] AC#2 fix — `pm-setup.md` Step 6 auth-error branch: añadir `claude mcp remove pm` + loop a Step 4 en vez de pedir al usuario que reinicie el wizard
+- [x] Version bump — `package.json` subido de `1.0.0` a `1.2.0` para coincidir con `plugin.json` y `marketplace.json`
+- [x] MCP server name — unificar a `"pm"` en todo; `pm-setup.md` ahora usa `claude mcp add pm` y `claude mcp remove pm` en todos los pasos
+- [x] `plugin.json` — agregar campo `"mcp": ".mcp.json"` para auto-registro del MCP server al instalar el plugin
+- [x] README — corregir ruta fuente en instalación manual de `.claude/skills/pm` a `skills/pm`

@@ -1,11 +1,11 @@
 {
-  "name": "pm-mcp",
-  "version": "1.0.0",
+  "name": "ticket-analyzer-mcp",
+  "version": "1.2.0",
   "description": "MCP server to read Trello cards and Jira issues",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "pm-mcp": "bin/pm-mcp.js"
+    "ticket-analyzer-mcp": "bin/pm-mcp.js"
   },
   "files": [
     "dist/",

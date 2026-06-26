@@ -5,5 +5,6 @@
   "description": "PM tools for analyzing and searching Trello cards and Jira issues inside Claude Code",
   "author": {
     "name": "ocampott"
-  }
+  },
+  "mcp": ".mcp.json"
 }

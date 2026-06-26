@@ -183,7 +183,7 @@ claude plugin marketplace add pm --source github --repo ocampott/pm-mcp
 ### 2. Instalar el plugin
 
 ```bash
-claude plugin install pm-mcp
+claude plugin install ticket-analyzer-mcp
 ```
 
 ### 3. Configurar credenciales
@@ -249,7 +249,7 @@ claude mcp list
 Los comandos `/pm-analize`, `/pm-search-ticket` y `/pm-update` son skills de Claude Code incluidos en este repo. Para activarlos copiá el plugin a tu directorio de skills:
 
 ```bash
-cp -r .claude/skills/pm ~/.claude/skills/pm
+cp -r skills/pm ~/.claude/skills/pm
 ```
 
 Luego reiniciá Claude Code o ejecutá `/reload-plugins`. Verificá que esté cargado:

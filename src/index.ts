@@ -168,7 +168,7 @@ function formatIssueAsMarkdown(issue: JiraIssueResult, imageNames: string[], tex
 }
 
 const server = new Server(
-  { name: "pm-mcp", version: "1.0.0" },
+  { name: "ticket-analyzer-mcp", version: "1.2.0" },
   { capabilities: { tools: {} } }
 );
 
