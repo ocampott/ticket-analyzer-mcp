@@ -656,6 +656,24 @@ describe("downloadJiraText", () => {
     expect(s3Options).toBeUndefined();
   });
 
+  it("follows 303 redirect and downloads text (Jira attachment/content responds 303)", async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 303,
+        headers: new Headers({ location: "https://s3.example.com/file.sql" }),
+        text: async () => "",
+      } as unknown as Response)
+      .mockResolvedValueOnce(makeTextResponse(200, "SELECT 2;"));
+
+    const result = await downloadJiraText("https://jira.example.com/att1", authHeader);
+    expect(result).not.toBeNull();
+    expect(result!.content).toBe("SELECT 2;");
+    const [s3Url, s3Options] = mockFetch.mock.calls[1] as [string, RequestInit | undefined];
+    expect(s3Url).toBe("https://s3.example.com/file.sql");
+    expect(s3Options).toBeUndefined();
+  });
+
   it("strips <style> and <script> from HTML attachments", async () => {
     const html = "<style>body{color:red}</style><h1>Title</h1><script>alert(1)</script><p>Content</p>";
     mockFetch.mockResolvedValueOnce(makeTextResponse(200, html));

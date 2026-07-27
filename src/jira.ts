@@ -41,6 +41,11 @@ const TEXT_MIME_EXACT = new Set(["application/json", "application/sql", "applica
 const TEXT_EXTENSIONS = new Set([".html", ".htm", ".sql", ".txt", ".md", ".json", ".csv", ".xml", ".yaml", ".yml"]);
 const MAX_TEXT_BYTES = 200_000;
 
+// Jira answers /rest/api/3/attachment/content/{id} with 303 See Other pointing at a
+// signed URL. 303 was missing here, so every attachment download aborted with
+// "download failed: HTTP 303".
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
 function stripHtmlNoise(content: string): string {
   return content
     .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
@@ -75,7 +80,7 @@ export async function downloadJiraText(
 
     let finalResponse: Response;
     const status = initialResponse.status;
-    if (status === 301 || status === 302 || status === 307 || status === 308) {
+    if (REDIRECT_STATUSES.has(status)) {
       const location = initialResponse.headers.get("location");
       if (!location) {
         console.error(`[jira] Text redirect without Location header: ${url}`);
@@ -267,7 +272,7 @@ export async function downloadJiraImage(url: string, authHeader: string): Promis
     let finalResponse: Response;
 
     const status = initialResponse.status;
-    if (status === 301 || status === 302 || status === 307 || status === 308) {
+    if (REDIRECT_STATUSES.has(status)) {
       const location = initialResponse.headers.get("location");
       if (!location) {
         console.error(`[jira] Redirect without Location header: ${url}`);
