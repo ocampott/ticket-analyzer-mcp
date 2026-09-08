@@ -1,8 +1,22 @@
 # Shared agent workflow
 
-`ticket-analyzer-mcp` is a standard, client-neutral MCP server. The consuming agent performs repository exploration and interpretation; the server provides provider data and deterministic structured evidence.
+`ticket-analyzer-mcp` is a standard, client-neutral MCP server. The consuming agent explores the repository and interprets the ticket; the server provides provider data and deterministic structured evidence.
 
-The canonical instructions are in the repository root [`AGENTS.md`](../AGENTS.md). Claude Code's model-invoked skill and the Codex adapter both point to that contract. The Codex-installable snapshot is [`integrations/codex/AGENTS.template.md`](../integrations/codex/AGENTS.template.md).
+## Secure setup
+
+From the project that should own credentials:
+
+```bash
+npx -y ticket-analyzer-mcp@latest setup
+```
+
+Before the release is published, run `node /absolute/path/to/ticket-analyzer-mcp/bin/pm-mcp.js setup` from the local checkout instead. Choose the providers and clients interactively. Setup writes selected credentials to the ignored project-local `.env`, preserves unrelated keys, and never modifies client configuration or prints secrets. The compatibility Claude setup skill points to this command rather than passing secrets to `claude mcp add`.
+
+The command with no subcommand is not setup: it starts the MCP server over stdio for a client. `doctor` checks Node, `.env`, provider completeness, and live connections. `status` checks only local configuration completeness and never calls a provider.
+
+## Environment behavior
+
+The server loads the path in `TICKET_ANALYZER_ENV_FILE`, or `<cwd>/.env` when unset. Real environment variables take precedence over file values and are never overwritten. Credentials never belong in Pi, Claude Code, or Codex configuration; Codex receives only the non-secret env-file path.
 
 ## Contract
 
@@ -11,10 +25,6 @@ The canonical instructions are in the repository root [`AGENTS.md`](../AGENTS.md
 3. Use `analyze_ticket` only for supporting structured evidence. It does not replace the consuming agent's interpretation or implementation plan.
 4. Read recent cached project context and known patterns, then inspect the exact relevant source files. Analysis is read-only.
 5. Return a concise plan with exact paths, dependencies, verification, risks, and size. Azure plans additionally include an estimate by work area and always include QA.
-6. Wait for an explicit implementation confirmation before editing code, running migrations, or posting ticket comments.
+6. Wait for explicit implementation confirmation before editing code or posting ticket comments.
 
-Natural-language requests are the primary interface. Client slash commands, where available, are compatibility aliases and must not be the only route to this workflow.
-
-## Version alignment
-
-The server package, Claude plugin metadata, root instructions, Claude model-invoked skill, and Codex adapter are aligned at **2.0.0**. Update the adapter snapshot whenever the workflow contract changes.
+Natural-language requests are the primary interface. Client slash commands, where available, are compatibility aliases and are not the only route to this workflow.

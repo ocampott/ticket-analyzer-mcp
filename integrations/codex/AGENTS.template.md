@@ -1,6 +1,6 @@
 # Ticket analysis workflow
 
-This project uses `ticket-analyzer-mcp` 2.0.0. Apply these instructions to natural-language requests; no slash command is required.
+This project uses `ticket-analyzer-mcp` 2.1.0. Apply these instructions to natural-language requests; no slash command is required.
 
 ## Ticket analysis
 

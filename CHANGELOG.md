@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.1.0] - Unreleased
+
+### Added
+
+- Added the secure `setup`, `doctor`, and `status` CLI commands with project-local `.env` loading, environment precedence, and secret-safe client guidance.
+- Added a placeholder-only `.env.example` and dotenv-backed environment resolution.
+
+### Changed
+
+- Bumped package, MCP server, Pi extension, Claude plugin, and marketplace metadata to `2.1.0`.
+- Updated client documentation and the Claude compatibility setup skill to keep provider secrets out of client configuration.
+
 ## [2.0.1] - 2026-09-08
 
 ### Changed

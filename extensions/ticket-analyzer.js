@@ -4,6 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 export const TICKET_ENV_VARS = Object.freeze([
+  "TICKET_ANALYZER_ENV_FILE",
   "TRELLO_API_KEY",
   "TRELLO_TOKEN",
   "TRELLO_DEFAULT_BOARD_ID",
@@ -160,7 +161,7 @@ export default function ticketAnalyzerExtension(pi) {
         stderr: "inherit",
       });
       const nextClient = new Client(
-        { name: "ticket-analyzer-pi", version: "2.0.0" },
+        { name: "ticket-analyzer-pi", version: "2.1.0" },
         { capabilities: {} },
       );
       transport = nextTransport;

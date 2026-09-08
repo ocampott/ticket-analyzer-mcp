@@ -2,7 +2,7 @@
 
 **Instruction adapter version: 2.0.0**
 
-Use this adapter with the canonical workflow in the repository root `AGENTS.md` (server distribution `2.0.0`). When installing into another project, merge `AGENTS.template.md` into that project's existing `AGENTS.md`; do not overwrite its instructions.
+Use this adapter with the canonical workflow in the repository root `AGENTS.md` (server distribution `2.1.0`). When installing into another project, merge `AGENTS.template.md` into that project's existing `AGENTS.md`; do not overwrite its instructions.
 
 The adapter makes natural-language ticket requests primary. Recognize requests such as:
 

@@ -3,3 +3,5 @@ dist/
 .env
 *.js.map
 .claude/project-context.md
+# Local Pi runtime state
+.atl/

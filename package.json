@@ -1,6 +1,6 @@
 {
   "name": "ticket-analyzer-mcp",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "Client-neutral MCP server for Trello cards, Jira issues and Azure DevOps work items",
   "repository": {
     "type": "git",
@@ -11,19 +11,33 @@
     "url": "https://github.com/ocampott/ticket-analyzer-mcp/issues"
   },
   "type": "module",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "main": "dist/index.js",
   "bin": {
     "ticket-analyzer-mcp": "bin/pm-mcp.js"
   },
   "pi": {
-    "extensions": ["./extensions/ticket-analyzer.js"],
-    "skills": ["./skills/analyze-ticket", "./skills/search", "./skills/status"]
+    "extensions": [
+      "./extensions/ticket-analyzer.js"
+    ],
+    "skills": [
+      "./skills/analyze-ticket",
+      "./skills/search",
+      "./skills/status"
+    ]
   },
   "files": [
-    "dist/",
-    "bin/",
-    "extensions/",
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "dist/**/*.js.map",
+    "dist/**/*.d.ts.map",
+    "!dist/**/__fixtures__/**",
+    "!dist/**/*.test.js",
+    "bin/pm-mcp.js",
+    "bin/cli.js",
+    "extensions/ticket-analyzer.js",
     "skills/",
     "integrations/",
     "docs/agent-workflow.md",
@@ -32,7 +46,8 @@
     "AGENTS.md",
     "CHANGELOG.md",
     ".claude-plugin/",
-    ".mcp.json"
+    ".mcp.json",
+    ".env.example"
   ],
   "scripts": {
     "build": "tsc",
@@ -41,7 +56,9 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@inquirer/prompts": "7.3.2",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "dotenv": "^16.6.1"
   },
   "devDependencies": {
     "@types/jest": "^29.5.0",

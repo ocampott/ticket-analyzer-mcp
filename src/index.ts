@@ -1,3 +1,4 @@
+import "./env.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -318,7 +319,7 @@ function formatWorkItemAsMarkdown(
 }
 
 const server = new Server(
-  { name: "ticket-analyzer-mcp", version: "2.0.1" },
+  { name: "ticket-analyzer-mcp", version: "2.1.0" },
   { capabilities: { tools: {} } }
 );
 
