@@ -1,6 +1,12 @@
 # Changelog
 
-## [2.0.0] - Unreleased
+## [2.0.1] - 2026-09-08
+
+### Changed
+
+- Simplified the README and install documentation; it now documents Claude Code, Codex, Pi, npm, and Azure DevOps.
+
+## [2.0.0] - 2026-09-08
 
 ### Added
 
@@ -17,4 +23,4 @@
 
 ### Release notes
 
-This release is prepared but not published. A maintainer must run the approved release checks, commit and tag `v2.0.0`, push the tag to GitHub, and publish the package (or let the existing tag-triggered workflow publish it). See the release commands in `README.md`.
+This release was published to npm as `ticket-analyzer-mcp@2.0.0` and tagged `v2.0.0`.

@@ -1,41 +1,51 @@
 # ticket-analyzer-mcp
 
-A client-neutral MCP server that connects Trello, Jira, and Azure DevOps to consuming coding agents. The agent fetches ticket context, explores the target codebase, and produces an implementation plan before any code is changed.
+A client-neutral MCP server for reading, searching, and analyzing tickets from **Trello, Jira, and Azure DevOps**. It works with Claude Code, OpenAI Codex, Pi, and other MCP-compatible clients.
 
-Version **2.0.0** adds the distribution layer for Claude Code, OpenAI Codex, and Pi. The MCP core remains standard and client-neutral; client-specific adapters live outside the core implementation.
+The server does not embed an LLM. It returns ticket evidence; the consuming agent explores the codebase, creates the plan, and asks for confirmation before changing code.
 
 ## What it provides
 
-The server exposes tools for:
+- Fetch complete Trello cards, Jira issues, and Azure DevOps work-item trees.
+- Search Trello, Jira, and Azure DevOps.
+- Include descriptions, comments, acceptance criteria, attachments, and Azure child work items.
+- Return deterministic, structured `analyze_ticket` evidence.
+- Post comments only through explicitly requested write-capable tools.
+- Keep credentials in the client environment; never store them in the repository.
 
-- Fetching complete Trello cards, Jira issues, and Azure DevOps work-item trees.
-- Searching Trello, Jira, and Azure DevOps.
-- Posting comments when explicitly requested and credentials permit it.
-- Checking integration status.
-- Returning deterministic structured `analyze_ticket` evidence. The consuming agent, not this tool, owns the final interpretation and implementation plan.
+Read tools include:
 
-Azure work-item reads include child Tasks, Bugs, and Stories, plus descriptions, acceptance criteria, comments, and images. Tree depth and node count are bounded and truncation is reported instead of hidden.
+```text
+get_trello_card       list_trello_cards       search_jira_issues
+get_jira_issue        get_azure_work_item    search_azure_work_items
+get_status            analyze_ticket
+```
+
+Write tools:
+
+```text
+add_trello_comment    add_jira_comment       add_azure_comment
+```
 
 ## Claude Code
 
-### Install from the GitHub marketplace
+### Install
 
 ```bash
-claude plugin marketplace add ticket-analyzer-mcp --source github --repo ocampott/ticket-analyzer-mcp
+claude plugin marketplace add ticket-analyzer-mcp \
+  --source github \
+  --repo ocampott/ticket-analyzer-mcp
+
 claude plugin install ticket-analyzer@ticket-analyzer-mcp
 ```
 
-Configure credentials with the compatibility wizard:
+Configure credentials inside Claude Code:
 
 ```text
 /ticket-analyzer:setup
 ```
 
-The wizard supports Trello, Jira, and Azure DevOps. Credentials are stored in Claude's local MCP configuration, not in this repository.
-
-### Natural-language use
-
-The primary interface is natural language. For example:
+Then ask naturally:
 
 ```text
 Analyze Azure DevOps ticket 1646 and make an implementation plan.
@@ -43,7 +53,7 @@ Analyze Jira issue PROJ-123 in the context of this repository.
 Understand Trello card abc123 before we code it.
 ```
 
-The Claude model-invoked skill recognizes these requests. The existing slash commands remain compatibility aliases:
+The existing slash commands remain available as compatibility shortcuts:
 
 ```text
 /ticket-analyzer:analize 1646
@@ -51,22 +61,18 @@ The Claude model-invoked skill recognizes these requests. The existing slash com
 /ticket-analyzer:status
 ```
 
-The workflow is safe by default: analyze and plan first, then wait for explicit confirmation before editing code or posting comments. See [`AGENTS.md`](AGENTS.md) and [`docs/agent-workflow.md`](docs/agent-workflow.md).
-
-### Update Claude
-
-Refresh the marketplace metadata and update the installed plugin:
+### Update
 
 ```bash
 claude plugin marketplace update ticket-analyzer-mcp
 claude plugin update ticket-analyzer@ticket-analyzer-mcp
 ```
 
-Restart Claude Code if the updated MCP server or skills are not visible. Keep the plugin version and server/instruction adapter versions aligned at `2.0.0`.
+Restart Claude Code if the updated server or skills are not visible.
 
 ## OpenAI Codex
 
-Register the server with the npm package:
+Register the npm package with the credentials for the integrations you use:
 
 ```bash
 codex mcp add ticket-analyzer \
@@ -76,98 +82,97 @@ codex mcp add ticket-analyzer \
   -- npx -y ticket-analyzer-mcp@latest
 ```
 
-Use only the variables for the integrations you need. Full instructions and the merge-safe instruction template are in [`docs/codex-install.md`](docs/codex-install.md) and [`integrations/codex/`](integrations/codex/). Merge `integrations/codex/AGENTS.template.md` into the target project's existing `AGENTS.md`; do not overwrite existing instructions.
+Merge [`integrations/codex/AGENTS.template.md`](integrations/codex/AGENTS.template.md) into the target project's existing `AGENTS.md`. Do not overwrite local instructions.
 
-Ask Codex naturally:
-
-```text
-Analyze Azure DevOps ticket 1646 and make an implementation plan.
-```
-
-The `@latest` server entry refreshes when Codex launches or restarts the MCP process. Re-merge the instruction template when its version changes. The server and instruction adapter must stay aligned.
+Restart Codex after changing the MCP configuration. Full setup details: [`docs/codex-install.md`](docs/codex-install.md).
 
 ## Pi
 
-Install the npm package globally for Pi, or scope it to the current project:
+Install the npm package globally or only for the current project:
 
 ```bash
-# Global install (available across projects)
 pi install npm:ticket-analyzer-mcp
-
-# Or, install only for the current project
+# or:
 pi install -l npm:ticket-analyzer-mcp
 ```
 
-Set the ticket credential environment variables before launching Pi (never commit real credentials):
+Set credentials before starting Pi:
 
 ```bash
-export AZURE_DEVOPS_ORG=...
-export AZURE_DEVOPS_PROJECT=...
-export AZURE_DEVOPS_PAT=...
+export AZURE_DEVOPS_ORG="..."
+export AZURE_DEVOPS_PROJECT="..."
+export AZURE_DEVOPS_PAT="..."
 pi
 ```
 
-Ask Pi naturally, or use the exact exposed MCP tool names:
+Pi exposes the MCP tools directly. Read-only tools run without confirmation; comment-writing and future unknown tools require an interactive confirmation and are denied in non-UI modes.
 
-```text
-Analyze Azure DevOps ticket 1646 and make an implementation plan.
-get_status
-analyze_ticket
-```
-
-The package also provides `/skill:analyze-ticket`, `/skill:search`, and `/skill:status`. Read-only tools run without approval; comment-writing and future tools require an interactive confirmation and are denied in non-UI modes. Approval is per call and is never persisted. The bundled extension launches `dist/index.js` directly with Node, without a shell or `npx`, and forwards only ticket credential variables.
-
-Update the package and restart Pi if needed:
+Update Pi packages with:
 
 ```bash
 pi update npm:ticket-analyzer-mcp
 ```
 
-For local installs, credential setup, project-local versus global scope, and trust/security guidance, see [`docs/pi-install.md`](docs/pi-install.md). The Claude-specific `skills/setup` skill is not loaded by Pi.
+Full setup details: [`docs/pi-install.md`](docs/pi-install.md).
 
 ## Credentials
 
-- **Trello:** create an API key and token at <https://trello.com/app-key>. Set `TRELLO_API_KEY` and `TRELLO_TOKEN`.
-- **Jira:** create an API token at <https://id.atlassian.com/manage-profile/security/api-tokens>. Set `JIRA_HOST` (for example `company.atlassian.net`), `JIRA_EMAIL`, and `JIRA_API_TOKEN`.
-- **Azure DevOps:** create a PAT at `https://dev.azure.com/{ORG}/_usersSettings/tokens` with **Work Items: Read**. Add write scope only when comments are required. Set `AZURE_DEVOPS_ORG`, `AZURE_DEVOPS_PROJECT`, and `AZURE_DEVOPS_PAT`.
+Set only the variables for the providers you use:
 
-Never commit credentials. Azure may return HTTP 203 with a sign-in page for an expired or wrongly scoped PAT; regenerate it with **Work Items (Read)**.
+| Provider | Variables |
+|---|---|
+| Trello | `TRELLO_API_KEY`, `TRELLO_TOKEN` |
+| Jira | `JIRA_HOST`, `JIRA_EMAIL`, `JIRA_API_TOKEN` |
+| Azure DevOps | `AZURE_DEVOPS_ORG`, `AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_PAT` |
+
+- Trello credentials: <https://trello.com/app-key>
+- Jira API tokens: <https://id.atlassian.com/manage-profile/security/api-tokens>
+- Azure PATs: `https://dev.azure.com/{ORG}/_usersSettings/tokens` with **Work Items: Read**
+
+Never commit credentials or paste them into a session transcript.
+
+## Safe workflow
+
+1. Fetch the ticket and its relevant attachments.
+2. Explore the target codebase and produce a concise plan.
+3. Wait for explicit confirmation.
+4. Implement only the agreed scope.
+
+A request to analyze or plan never authorizes code changes or ticket comments.
+
+## Install the server directly
+
+MCP-compatible clients can launch the server with:
+
+```bash
+npx -y ticket-analyzer-mcp@latest
+```
+
+Pin a release when reproducibility matters:
+
+```bash
+npx -y ticket-analyzer-mcp@2.0.1
+```
 
 ## Requirements
 
 - Node.js 18+
-- Claude Code, OpenAI Codex, or Pi
+- Claude Code, OpenAI Codex, Pi, or another MCP-compatible client
 
-## Maintainer release steps (not run by this change)
-
-The `2.0.0` release is prepared but not published. After human approval, run these checks from a clean review state:
+## Development
 
 ```bash
+npm install
 npm run build
 npm test
-npm pack --dry-run
 ```
 
-Then choose one publication path. The existing GitHub workflow publishes on a version tag:
+More documentation:
 
-```bash
-git add \
-  AGENTS.md CHANGELOG.md CLAUDE.md README.md \
-  .claude-plugin \
-  docs/agent-workflow.md docs/codex-install.md docs/pi-install.md \
-  extensions integrations \
-  package.json package-lock.json run.sh \
-  skills \
-  src/analysis src/azure.ts src/azure.test.ts src/index.ts
-git commit -m "release: v2.0.0"
-git tag v2.0.0
-git push origin main --tags
-```
+- [`AGENTS.md`](AGENTS.md) — canonical agent workflow
+- [`docs/agent-workflow.md`](docs/agent-workflow.md) — shared workflow details
+- [`docs/codex-install.md`](docs/codex-install.md) — Codex setup
+- [`docs/pi-install.md`](docs/pi-install.md) — Pi setup
+- [`CHANGELOG.md`](CHANGELOG.md) — release history
 
-Or publish directly instead of using the tag-triggered workflow:
-
-```bash
-npm publish --access public
-```
-
-These commit, tag, push, and publish commands require maintainer action and were not run here.
+GitHub: <https://github.com/ocampott/ticket-analyzer-mcp>

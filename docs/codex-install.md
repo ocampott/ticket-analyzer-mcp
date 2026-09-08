@@ -1,6 +1,6 @@
 # Install with OpenAI Codex
 
-This is the Codex installation path for `ticket-analyzer-mcp` 2.0.0. It uses the standard MCP server and the instruction adapter in [`integrations/codex/`](../integrations/codex/).
+This is the Codex installation path for `ticket-analyzer-mcp` 2.0.1. It uses the standard MCP server and the instruction adapter in [`integrations/codex/`](../integrations/codex/).
 
 ## Register the MCP server
 
@@ -24,7 +24,7 @@ Run `codex mcp list`, then restart Codex. Never commit credentials or a generate
 
 Merge [`integrations/codex/AGENTS.template.md`](../integrations/codex/AGENTS.template.md) into the target project's existing `AGENTS.md`. Do not overwrite existing instructions. Preserve local rules and add the ticket workflow section; if no file exists, the template can be copied as the initial `AGENTS.md`.
 
-Keep the server version, root `AGENTS.md`, and copied Codex adapter at **2.0.0**.
+Keep the server version at **2.0.1**. Keep the root `AGENTS.md` and copied Codex adapter at their instruction-contract version, **2.0.0**.
 
 ## Credentials
 

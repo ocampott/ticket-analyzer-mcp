@@ -1,6 +1,6 @@
 # Install with Pi
 
-`ticket-analyzer-mcp@2.0.0` is a Pi package. It includes a small extension that starts the bundled MCP server directly with Node and exposes the server's discovered tools to Pi.
+`ticket-analyzer-mcp@2.0.1` is a Pi package. It includes a small extension that starts the bundled MCP server directly with Node and exposes the server's discovered tools to Pi.
 
 ## Install from npm
 
@@ -60,7 +60,7 @@ Update this package while keeping the current scope:
 pi update npm:ticket-analyzer-mcp
 ```
 
-Restart Pi after updating if the extension or skills are not visible. An unversioned npm spec follows the package's current release; use `npm:ticket-analyzer-mcp@2.0.0` when you need to pin this release.
+Restart Pi after updating if the extension or skills are not visible. An unversioned npm spec follows the package's current release; use `npm:ticket-analyzer-mcp@2.0.1` when you need to pin this release.
 
 ## Use
 
