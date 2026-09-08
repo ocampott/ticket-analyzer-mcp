@@ -8,7 +8,9 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { getTrelloCard, TrelloCardResult, listTrelloCards, addTrelloComment, getTrelloStatus, TextAttachment } from "./trello.js";
 import { getJiraIssue, JiraIssueResult, searchJiraIssues, addJiraComment, getJiraStatus } from "./jira.js";
+import { getAzureWorkItem, AzureWorkItemResult, AzureWorkItemNode, searchAzureWorkItems, addAzureComment, getAzureStatus, DEFAULT_MAX_DEPTH, DEFAULT_MAX_NODES } from "./azure.js";
 import { getJiraCustomFields } from "./fields.js";
+import { handleAnalyzeTicket } from "./analysis/tool.js";
 
 function formatDate(iso: string): string {
   return iso.slice(0, 10);
@@ -167,8 +169,156 @@ function formatIssueAsMarkdown(issue: JiraIssueResult, imageNames: string[], tex
   return lines.join("\n");
 }
 
+function formatNodeBody(node: AzureWorkItemNode, headingLevel: number): string[] {
+  const h = "#".repeat(headingLevel);
+  const lines: string[] = [];
+
+  if (node.description) {
+    lines.push("");
+    lines.push(`${h} Descripción`);
+    lines.push(node.description);
+  }
+
+  if (node.acceptanceCriteria) {
+    lines.push("");
+    lines.push(`${h} Criterios de aceptación`);
+    lines.push(node.acceptanceCriteria);
+  }
+
+  if (node.reproSteps) {
+    lines.push("");
+    lines.push(`${h} Pasos para reproducir`);
+    lines.push(node.reproSteps);
+  }
+
+  if (node.comments.length > 0) {
+    lines.push("");
+    lines.push(`${h} Comentarios (${node.comments.length})`);
+    for (const comment of node.comments) {
+      lines.push(`${comment.author} (${formatDate(comment.date)}):`);
+      lines.push(comment.text);
+    }
+  }
+
+  if (node.attachments.length > 0) {
+    lines.push("");
+    lines.push(`${h} Adjuntos (${node.attachments.length})`);
+    for (const att of node.attachments) {
+      lines.push(`- ${att.name} (${att.mimeType})`);
+    }
+  }
+
+  return lines;
+}
+
+function nodeMeta(node: AzureWorkItemNode): string {
+  const meta: string[] = [`Estado: ${node.state}`];
+  if (node.reason) meta.push(`Motivo: ${node.reason}`);
+  if (node.priority !== null) meta.push(`Prioridad: ${node.priority}`);
+  if (node.storyPoints !== null) meta.push(`Story Points: ${node.storyPoints}`);
+  if (node.remainingWork !== null) meta.push(`Restante: ${node.remainingWork}h`);
+  if (node.assignee) meta.push(`Asignado: ${node.assignee}`);
+  if (node.iterationPath) meta.push(`Iteración: ${node.iterationPath}`);
+  if (node.tags.length > 0) meta.push(`Tags: ${node.tags.join(", ")}`);
+  return meta.join(" | ");
+}
+
+/** Depth-first list of every descendant, each paired with its parent and its depth. */
+function flattenDescendants(
+  node: AzureWorkItemNode,
+  depth = 1,
+  parent: AzureWorkItemNode | null = null
+): { node: AzureWorkItemNode; depth: number; parent: AzureWorkItemNode | null }[] {
+  return node.children.flatMap((child) => [
+    { node: child, depth, parent: node },
+    ...flattenDescendants(child, depth + 1, child),
+  ]);
+}
+
+function formatIndexTree(node: AzureWorkItemNode, depth = 0): string[] {
+  return node.children.flatMap((child) => [
+    `${"  ".repeat(depth)}- [${child.state}] ${child.workItemType} ${child.id}: ${child.title}`,
+    ...formatIndexTree(child, depth + 1),
+  ]);
+}
+
+function formatWorkItemAsMarkdown(
+  item: AzureWorkItemResult,
+  imageNames: string[],
+  textAttachments: TextAttachment[]
+): string {
+  const lines: string[] = [];
+
+  lines.push(`# [${item.id}] ${item.title}`);
+  lines.push("");
+
+  const head: string[] = [`Tipo: ${item.workItemType}`, nodeMeta(item)];
+  lines.push(head.join(" | "));
+  if (item.areaPath) lines.push(`Área: ${item.areaPath}`);
+  if (item.createdBy) lines.push(`Creado por: ${item.createdBy}`);
+  if (item.parent) lines.push(`Parent: [${item.parent.id}] ${item.parent.title} (${item.parent.type})`);
+  lines.push(`URL: ${item.url}`);
+
+  lines.push(...formatNodeBody(item, 2));
+
+  const descendants = flattenDescendants(item);
+
+  if (descendants.length > 0) {
+    lines.push("");
+    lines.push(`## Árbol del ticket (${item.nodeCount} work items)`);
+    lines.push(...formatIndexTree(item));
+    if (item.truncated) {
+      lines.push("");
+      lines.push(
+        "_Árbol truncado: hay más work items debajo de los que se trajeron. Subí `max_depth` o `max_nodes` si necesitás el resto._"
+      );
+    }
+  }
+
+  if (item.related.length > 0) {
+    lines.push("");
+    lines.push(`## Relacionados (${item.related.length})`);
+    for (const rel of item.related) {
+      lines.push(`- ${rel.type} ${rel.id}: ${rel.title}`);
+    }
+  }
+
+  for (const { node, parent } of descendants) {
+    lines.push("");
+    lines.push("---");
+    lines.push("");
+    lines.push(`## [${node.id}] ${node.workItemType} — ${node.title}`);
+    const meta = nodeMeta(node);
+    lines.push(parent ? `Padre: ${parent.id} | ${meta}` : meta);
+    lines.push(`URL: ${node.url}`);
+    lines.push(...formatNodeBody(node, 3));
+  }
+
+  if (textAttachments.length > 0) {
+    lines.push("");
+    lines.push("---");
+    lines.push("");
+    lines.push(`## Contenido de adjuntos (${textAttachments.length})`);
+    for (const att of textAttachments) {
+      lines.push("");
+      lines.push(`### ${att.name}`);
+      const lang = langHintFromName(att.name);
+      lines.push(`\`\`\`${lang}`);
+      lines.push(att.content);
+      lines.push("```");
+    }
+  }
+
+  if (imageNames.length > 0) {
+    lines.push("");
+    lines.push(`_Imágenes (${imageNames.length}): ${imageNames.map((n, i) => `[${i + 1}] ${n}`).join(", ")}_`);
+  }
+
+  return lines.join("\n");
+}
+
 const server = new Server(
-  { name: "ticket-analyzer-mcp", version: "1.2.0" },
+  { name: "ticket-analyzer-mcp", version: "2.0.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -303,8 +453,92 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
       },
       {
+        name: "get_azure_work_item",
+        description: "Fetch a complete Azure DevOps ticket by numeric ID: the work item AND every work item below it in the hierarchy (Tasks, Bugs, child User Stories), each with its own description, acceptance criteria, repro steps, comments and attachments. Also returns parent and related items as summaries. Use this whenever you need to understand what a ticket actually asks for — the requirement is often written in a child, not in the root.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            work_item_id: {
+              type: "number",
+              description: "Azure DevOps work item ID (e.g. 1596)",
+            },
+            max_depth: {
+              type: "number",
+              description: "How many levels of children to descend. Default: 3. Use 0 for the root work item alone.",
+            },
+            max_nodes: {
+              type: "number",
+              description: "Cap on total work items fetched, root included (default: 40). Guards against pulling a whole Epic tree.",
+            },
+            include_images: {
+              type: "boolean",
+              description: "Include attached images (default: true). Set false to save tokens.",
+            },
+            max_comments: {
+              type: "number",
+              description: "Limit number of comments returned (most recent N). Default: no limit.",
+            },
+            include_text_attachments: {
+              type: "boolean",
+              description: "Download and include the content of text attachments (.html, .sql, .txt, .json, etc.) inline in the response. Default: false.",
+            },
+          },
+          required: ["work_item_id"],
+        },
+      },
+      {
+        name: "search_azure_work_items",
+        description: "Search Azure DevOps work items using WIQL. Accepts a full 'SELECT [System.Id] FROM WorkItems WHERE ...' query, or just the WHERE clause. Returns id, title, type, state, assignee, and iteration.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            wiql: {
+              type: "string",
+              description: "WIQL query, or just the WHERE condition (e.g. \"[System.WorkItemType] = 'User Story' AND [System.State] = 'Active'\")",
+            },
+            max_results: {
+              type: "number",
+              description: "Max results to return (default: 20)",
+            },
+          },
+          required: ["wiql"],
+        },
+      },
+      {
+        name: "add_azure_comment",
+        description: "Add a comment to an Azure DevOps work item. Requires a PAT with Work Items (Read & Write) scope.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            work_item_id: {
+              type: "number",
+              description: "Azure DevOps work item ID",
+            },
+            text: {
+              type: "string",
+              description: "Comment text (basic HTML supported)",
+            },
+          },
+          required: ["work_item_id", "text"],
+        },
+      },
+      {
+        name: "analyze_ticket",
+        description: "Analyze a Jira issue, Trello card, Azure DevOps work item, or normalized ticket and return a structured engineering Context Package. Repo-free and deterministic.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Jira issue key, Trello card ID, or Azure DevOps work item ID" },
+            ticket: { type: "object", description: "Optional normalized ticket payload; use this instead of id" },
+            source: { type: "string", enum: ["jira", "trello", "azure", "auto"], description: "Platform (default: auto-detect by ID format)" },
+            format: { type: "string", enum: ["both", "json", "markdown"], description: "Output format (default: both)" },
+          },
+          oneOf: [{ required: ["id"] }, { required: ["ticket"] }],
+        },
+      },
+      {
         name: "get_status",
-        description: "Check which integrations are configured and connected. Returns account info for Trello and/or Jira.",
+        description: "Check which integrations are configured and connected. Returns account info for Trello, Jira, and/or Azure DevOps.",
         inputSchema: {
           type: "object",
           properties: {},
@@ -501,10 +735,121 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
   }
 
+  if (name === "get_azure_work_item") {
+    const typedArgs = args as { work_item_id?: number; include_images?: boolean; max_comments?: number; include_text_attachments?: boolean; max_depth?: number; max_nodes?: number } | undefined;
+    const workItemId = typedArgs?.work_item_id;
+    const includeImages = typedArgs?.include_images ?? true;
+    const maxComments = typedArgs?.max_comments;
+    const includeTextAttachments = typedArgs?.include_text_attachments ?? false;
+    const maxDepth = typedArgs?.max_depth ?? DEFAULT_MAX_DEPTH;
+    const maxNodes = typedArgs?.max_nodes ?? DEFAULT_MAX_NODES;
+
+    if (typeof workItemId !== "number" || !Number.isInteger(workItemId) || workItemId <= 0) {
+      throw new McpError(ErrorCode.InvalidParams, "work_item_id is required and must be a positive integer");
+    }
+    if (!Number.isInteger(maxDepth) || maxDepth < 0) {
+      throw new McpError(ErrorCode.InvalidParams, "max_depth must be a non-negative integer");
+    }
+    if (!Number.isInteger(maxNodes) || maxNodes < 1) {
+      throw new McpError(ErrorCode.InvalidParams, "max_nodes must be a positive integer");
+    }
+
+    console.error(`[pm-mcp] Tool called: get_azure_work_item(${workItemId})`);
+
+    try {
+      const { workItem, images, textAttachments } = await getAzureWorkItem(workItemId, includeImages, maxComments, includeTextAttachments, maxDepth, maxNodes);
+      console.error(
+        `[pm-mcp] Success: work item ${workItem.id}, ${workItem.nodeCount} node(s) in tree${workItem.truncated ? " (truncated)" : ""}, ${images.length} image(s), ${textAttachments.length} text attachment(s)`
+      );
+
+      const imageNames = images.map((img) => img.name);
+
+      const content: Array<
+        | { type: "text"; text: string }
+        | { type: "image"; data: string; mimeType: string }
+      > = [{ type: "text", text: formatWorkItemAsMarkdown(workItem, imageNames, textAttachments) }];
+
+      for (const img of images) {
+        content.push({ type: "text", text: `[Imagen: ${img.name}]` });
+        content.push({ type: "image", data: img.base64, mimeType: img.mimeType });
+      }
+
+      return { content };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[pm-mcp] Error: ${message}`);
+      return { content: [{ type: "text", text: `Error: ${message}` }], isError: true };
+    }
+  }
+
+  if (name === "search_azure_work_items") {
+    const typedArgs = args as { wiql?: string; max_results?: number } | undefined;
+    const wiql = typedArgs?.wiql;
+    const maxResults = typedArgs?.max_results ?? 20;
+
+    if (!wiql || typeof wiql !== "string") {
+      throw new McpError(ErrorCode.InvalidParams, "wiql is required and must be a string");
+    }
+
+    console.error(`[pm-mcp] Tool called: search_azure_work_items`);
+
+    try {
+      const result = await searchAzureWorkItems(wiql, maxResults);
+      const lines: string[] = [`**${result.total} resultado(s)**\n`];
+      result.workItems.forEach((item, i) => {
+        lines.push(`${i + 1}. **${item.id}** — ${item.title}`);
+        const meta = [item.type, item.state];
+        if (item.assignee) meta.push(item.assignee);
+        if (item.iterationPath) meta.push(item.iterationPath);
+        lines.push(`   ${meta.join(" | ")}`);
+      });
+      return { content: [{ type: "text", text: lines.join("\n") }] };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[pm-mcp] Error: ${message}`);
+      return { content: [{ type: "text", text: `Error: ${message}` }], isError: true };
+    }
+  }
+
+  if (name === "add_azure_comment") {
+    const typedArgs = args as { work_item_id?: number; text?: string } | undefined;
+    const workItemId = typedArgs?.work_item_id;
+    const text = typedArgs?.text;
+
+    if (typeof workItemId !== "number" || !Number.isInteger(workItemId) || workItemId <= 0) {
+      throw new McpError(ErrorCode.InvalidParams, "work_item_id is required and must be a positive integer");
+    }
+    if (!text || typeof text !== "string") {
+      throw new McpError(ErrorCode.InvalidParams, "text is required");
+    }
+
+    console.error(`[pm-mcp] Tool called: add_azure_comment(${workItemId})`);
+
+    try {
+      await addAzureComment(workItemId, text);
+      return { content: [{ type: "text", text: `Comentario agregado al work item ${workItemId}.` }] };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[pm-mcp] Error: ${message}`);
+      return { content: [{ type: "text", text: `Error: ${message}` }], isError: true };
+    }
+  }
+
+  if (name === "analyze_ticket") {
+    return handleAnalyzeTicket(
+      (args ?? {}) as {
+        id?: string;
+        ticket?: import("./analysis/types.js").NormalizedTicket;
+        source?: "jira" | "trello" | "azure" | "auto";
+        format?: "both" | "json" | "markdown";
+      },
+    );
+  }
+
   if (name === "get_status") {
     console.error("[pm-mcp] Tool called: get_status");
 
-    const [trello, jira] = await Promise.all([getTrelloStatus(), getJiraStatus()]);
+    const [trello, jira, azure] = await Promise.all([getTrelloStatus(), getJiraStatus(), getAzureStatus()]);
 
     const lines: string[] = ["## ticket-analyzer status\n"];
 
@@ -530,6 +875,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     } else if (jira.configured) {
       lines.push(`  Host: ${jira.host}`);
       lines.push(`  Error: ${jira.error}`);
+    } else {
+      lines.push("  No configurado — ejecutá /ticket-analyzer:setup");
+    }
+
+    lines.push("");
+
+    const azureIcon = azure.connected ? "✓" : azure.configured ? "✗" : "—";
+    lines.push(`**Azure DevOps** ${azureIcon}`);
+    if (azure.connected) {
+      lines.push(`  Organización: ${azure.org}`);
+      lines.push(`  Proyecto: ${azure.project}`);
+      if (azure.workItemTypes?.length) {
+        lines.push(`  Tipos de work item: ${azure.workItemTypes.join(", ")}`);
+      }
+    } else if (azure.configured) {
+      lines.push(`  Organización: ${azure.org} / Proyecto: ${azure.project}`);
+      lines.push(`  Error: ${azure.error}`);
     } else {
       lines.push("  No configurado — ejecutá /ticket-analyzer:setup");
     }

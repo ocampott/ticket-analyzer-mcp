@@ -1,5 +1,7 @@
 ---
-description: Set up ticket-analyzer credentials interactively. Wizard for configuring Trello and/or Jira integrations.
+description: Set up ticket-analyzer credentials interactively. Wizard for configuring Trello, Jira, and/or Azure DevOps integrations.
+disable-model-invocation: true
+user-invocable: true
 ---
 
 You are running the ticket-analyzer setup wizard. Guide the user step by step through credential configuration.
@@ -46,12 +48,12 @@ Report which ones were removed.
 
 ## Step 3 — Choose Integration
 
-Ask the user (AskUserQuestion with selectable options):
+Ask the user (AskUserQuestion, `multiSelect: true`):
 > "¿Qué integraciones querés configurar?"
 Options:
-- "Solo Trello"
-- "Solo Jira"
-- "Ambas (Trello + Jira)"
+- "Trello"
+- "Jira"
+- "Azure DevOps"
 
 Store the selection as `chosen_integrations`.
 
@@ -75,6 +77,15 @@ Ask the user (AskUserQuestion — open text):
 
 Collect each value. Store as `JIRA_HOST`, `JIRA_EMAIL`, `JIRA_API_TOKEN`.
 
+### For Azure DevOps (if selected)
+
+Ask the user (AskUserQuestion — open text):
+> "Necesito los datos de Azure DevOps.\n\n1. AZURE_DEVOPS_ORG y 2. AZURE_DEVOPS_PROJECT — salen de la URL de tu tablero: `https://dev.azure.com/{ORG}/{PROJECT}/_workitems`\n3. AZURE_DEVOPS_PAT — generalo en `https://dev.azure.com/{ORG}/_usersSettings/tokens` → **+ New Token** → Scopes: **Custom defined** → **Work Items: Read** (agregá *Read & Write* solo si querés poder comentar desde acá). El token se muestra una sola vez."
+
+Collect each value. Store as `AZURE_DEVOPS_ORG`, `AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_PAT`.
+
+Pass the project name with real spaces if it has any — the server URL-encodes it.
+
 ---
 
 ## Step 5 — Register MCP Server
@@ -92,6 +103,7 @@ claude mcp add pm \
 Add only the env vars for the integrations the user chose:
 - Trello: `--env TRELLO_API_KEY=[value] --env TRELLO_TOKEN=[value]`
 - Jira: `--env JIRA_HOST=[value] --env JIRA_EMAIL=[value] --env JIRA_API_TOKEN=[value]`
+- Azure DevOps: `--env AZURE_DEVOPS_ORG=[value] --env AZURE_DEVOPS_PROJECT=[value] --env AZURE_DEVOPS_PAT=[value]`
 
 Run the command. Report success or failure.
 
@@ -109,10 +121,16 @@ Then retry the `claude mcp add` command.
 
 ## Step 6 — Verify Connection
 
-After registering, test the connection by calling a lightweight MCP tool:
+After registering, call `get_status`. It reports every configured integration at once and needs no placeholder IDs.
 
-- **If Jira was configured**: call `get_jira_issue` with a placeholder key like `TEST-1`. A "not found" error is fine — it proves the server is running and authenticated.
-- **If only Trello was configured**: call `get_trello_card` with a placeholder ID. Same — any response (including error) that comes from the server proves connectivity.
+Read the result:
+- A `✓` on an integration means it authenticated.
+- A `✗` means the credentials were rejected — the line carries the reason.
+- A `—` means it was not configured.
+
+If `get_status` is unavailable, fall back to a per-integration probe (`get_jira_issue` with `TEST-1`, `get_trello_card` with any ID, `get_azure_work_item` with `1`). A "not found" error still proves the server is running and authenticated.
+
+> **Azure DevOps**: an expired or wrongly-scoped PAT answers HTTP 203 with a sign-in page rather than 401. `get_status` already translates that into "credenciales inválidas o PAT sin scope Work Items" — if you see it, regenerate the PAT with the **Work Items (Read)** scope.
 
 **If the tool call succeeds or returns an expected API error (404, issue not found, card not found):**
 > "Conexión verificada. ticket-analyzer está listo."

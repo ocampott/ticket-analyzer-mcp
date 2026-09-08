@@ -1,5 +1,7 @@
 ---
-description: Check the connection status of Trello and Jira integrations. Shows which accounts are configured and connected.
+description: Check the connection status of Trello, Jira and Azure DevOps integrations. Shows which accounts are configured and connected.
+disable-model-invocation: true
+user-invocable: true
 ---
 
 Call the `get_status` MCP tool (plugin: `ticket-analyzer`, server: `pm`).

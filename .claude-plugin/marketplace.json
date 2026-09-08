@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "ticket-analyzer-mcp",
-  "description": "Connect Claude Code to Trello and Jira. Fetch tickets, analyze them in the context of your codebase, and get implementation plans.",
+  "description": "Connect Claude Code to the client-neutral ticket-analyzer MCP server for Trello, Jira and Azure DevOps.",
   "owner": {
     "name": "Tomás Ocampo",
     "email": "tomas@xoolix.com"
@@ -9,8 +9,8 @@
   "plugins": [
     {
       "name": "ticket-analyzer",
-      "description": "PM tools for analyzing and searching Trello cards and Jira issues inside Claude Code",
-      "version": "1.2.3",
+      "description": "Analyze and search Trello cards, Jira issues and Azure DevOps work items from natural-language requests in Claude Code",
+      "version": "2.0.0",
       "source": "./"
     }
   ]

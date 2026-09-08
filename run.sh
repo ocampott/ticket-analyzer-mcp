@@ -1,2 +1,5 @@
-#!/bin/bash
-exec /Users/tomasocampo/.local/share/fnm/node-versions/v20.20.1/installation/bin/node /Users/tomasocampo/Documents/personal/trello-mcp/dist/index.js
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+exec node "$SCRIPT_DIR/dist/index.js"

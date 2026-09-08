@@ -1,5 +1,7 @@
 ---
-description: Search Jira or Trello tickets using natural language. Usage: /ticket-analyzer:search [jira|trello] [free query]
+description: Search Jira, Trello, or Azure DevOps tickets using natural language. Usage: /ticket-analyzer:search [jira|trello|azure] [free query]
+disable-model-invocation: true
+user-invocable: true
 ---
 
 The user wants to search PM tickets. Input received: **{{args}}**
@@ -7,11 +9,11 @@ The user wants to search PM tickets. Input received: **{{args}}**
 ## Parse Input
 
 Split `{{args}}`:
-- **First word** = platform (`jira` or `trello`)
+- **First word** = platform (`jira`, `trello`, or `azure`)
 - **Everything after** = the free-text query
 
-If the platform word is missing or not `jira`/`trello`, reply:
-> "Usá `/ticket-analyzer:search jira [query]` o `/ticket-analyzer:search trello [query]`."
+If the platform word is missing or not one of those, reply:
+> "Usá `/ticket-analyzer:search jira [query]`, `trello [query]` o `azure [query]`."
 Then stop.
 
 ---
@@ -68,3 +70,39 @@ Combine fragments with `AND`. Example: `"tickets del sprint actual en doing sobr
 **4. Ask:** "¿Querés analizar alguna? Escribí el número."
 
 **5. When the user replies**, run the full analysis workflow from CLAUDE.md (Pasos 1–9) with that card ID.
+
+---
+
+## For Azure DevOps
+
+**1. Translate the query to a WIQL `WHERE` clause.** Use these mappings as building blocks:
+
+| User says | WIQL fragment |
+|-----------|--------------|
+| "iteración actual" / "sprint actual" | `[System.IterationPath] = @CurrentIteration` |
+| "en doing" / "en progreso" | `[System.State] = 'Active'` |
+| "cerrados" / "terminados" | `[System.State] = 'Closed'` |
+| "sin asignar" | `[System.AssignedTo] = ''` |
+| "míos" / "asignados a mí" | `[System.AssignedTo] = @Me` |
+| "bugs" / "errores" | `[System.WorkItemType] = 'Bug'` |
+| "historias" / "user stories" | `[System.WorkItemType] = 'User Story'` |
+| "tasks" / "tareas" | `[System.WorkItemType] = 'Task'` |
+| "alta prioridad" | `[Microsoft.VSTS.Common.Priority] <= 2` |
+| "sobre X" / keyword topic | `[System.Title] CONTAINS 'X'` |
+| "con el tag X" | `[System.Tags] CONTAINS 'X'` |
+
+Combine with `AND`. Example: `"user stories activas sobre pagos"` → `[System.WorkItemType] = 'User Story' AND [System.State] = 'Active' AND [System.Title] CONTAINS 'pagos'`.
+
+**2. Call `search_azure_work_items`** with the clause as `wiql` and `max_results: 10`. The tool wraps a bare `WHERE` clause into a full query — only send a full `SELECT` when the user needs custom ordering.
+
+**3. Display results** as a numbered list:
+```
+1. 1596 — [CMMC] Asignaciones y conteo proveniente de memoq
+   User Story | Active | Tomas Ocampo | TerraSoft\124
+2. 1660 — No se crean entregas
+   Task | New | Tomas Ocampo
+```
+
+**4. Ask:** "¿Querés analizar alguno? Escribí el número o el ID."
+
+**5. When the user replies**, run the full analysis workflow from CLAUDE.md (Pasos 1–9) with that work item ID.

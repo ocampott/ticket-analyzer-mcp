@@ -1,8 +1,8 @@
-# pm-mcp — Instrucciones para Claude Code
+# ticket-analyzer-mcp — Instrucciones para Claude Code
 
 ## Qué es esto
 
-`pm-mcp` es un servidor MCP que expone los tools `get_trello_card` y `get_jira_issue` para traer el contenido de tarjetas e issues directamente en Claude Code.
+`ticket-analyzer-mcp` es un servidor MCP que expone los tools `get_trello_card`, `get_jira_issue` y `get_azure_work_item` para traer el contenido de tarjetas, issues y work items directamente en Claude Code.
 
 Para que Claude analice los resultados automáticamente con Opus, copiá la sección de abajo a tu `~/.claude/CLAUDE.md` (configuración global) o al `CLAUDE.md` de tu proyecto. Esta sección es la fuente de verdad — si la actualizás acá, actualizala también en el global.
 
@@ -10,173 +10,169 @@ Para que Claude analice los resultados automáticamente con Opus, copiá la secc
 
 ## Análisis de tarjetas y issues
 
-Cuando uses `get_trello_card` o `get_jira_issue`, seguí estos pasos:
+Cuando uses `get_trello_card`, `get_jira_issue` o `get_azure_work_item`, seguí estos pasos.
 
-### Paso 1 — Imágenes y adjuntos de texto
-Preguntale al usuario con una sola llamada a `AskUserQuestion` (dos preguntas):
-1. "¿Querés que analice las imágenes adjuntas? Omitirlas ahorra tokens si no son necesarias."
-2. "¿Querés que lea el contenido de archivos de texto adjuntos (.html, .sql, .txt, .json, etc.)? Puede agregar bastantes tokens según el tamaño de los archivos."
+Regla que manda sobre todo lo demás: **pensá profundo, respondé corto.** Se comprime la salida, nunca el razonamiento. Y no gastes un turno en algo que entra en el mensaje que estás escribiendo.
 
-Usá `include_images: true/false` e `include_text_attachments: true/false` según las respuestas.
+### Paso 1 — Traé el ticket
 
-### Paso 2 — Llamá al tool
-Con los parámetros `include_images` e `include_text_attachments` adecuados.
+- **Jira** → `get_jira_issue` con `issue_key`
+- **Trello** → `get_trello_card` con `card_id`
+- **Azure DevOps** → `get_azure_work_item` con `work_item_id` (número, no string)
 
-### Paso 3 — Contexto del proyecto
-Intentá leer `.claude/project-context.md`:
-- **Existe y es reciente** (< 30 días): tenés el contexto listo.
-- **Existe pero tiene más de 30 días** (o el usuario dijo que el proyecto cambió): borralo y tratalo como no existente.
-- **No existe**: Opus va a explorar el proyecto y vas a escribir el archivo después.
+**Pedilo con `include_images: false` e `include_text_attachments: false`, y no preguntes antes.** La respuesta ya lista todos los adjuntos por nombre, que es justamente lo que te dice si alguno vale los tokens. La mayoría de los tickets nunca necesita un segundo fetch.
 
-Además, intentá leer `.claude/patterns.md`:
-- **Existe**: incluirlo en el prompt del agente (no tiene expiración — los patrones son estables).
-- **No existe**: el agente puede generar la primera versión si detecta patrones importantes.
+Volvé a pedirlo **solo** si un adjunto define la implementación: un wireframe en un ticket de UI, un `.sql` en uno de datos, un `.csv`/`.json` cuando el ticket es de parsear ese formato exacto, o una captura en un bug cuya descripción no explica la falla. Si no, seguí de largo. Si dudás si un adjunto importa, nombralo en el mismo mensaje del análisis en vez de frenar.
 
-### Paso 4 — Evaluá la complejidad del ticket
+**Azure**: devuelve el árbol completo — cada Task, Bug e hijo con su propia descripción, criterios de aceptación, pasos para reproducir y comentarios. Leé los hijos antes de explorar el codebase: el requerimiento real suele estar en un hijo, no en la Story raíz. Si dice `_Árbol truncado_`, subí `max_depth` (default 3) o `max_nodes` (default 40) — nunca analices un árbol truncado como si estuviera completo.
 
-Leé el contenido del ticket y verificá si cumple alguno de estos criterios de escalación a Opus:
-- Más de 10 archivos probablemente afectados
-- Requiere cambios en schema de base de datos
-- Múltiples servicios/módulos a modificar
-- Integraciones externas involucradas
-- Autenticación o permisos impactados
-- Arquitectura existente en conflicto con el feature
-- Alta ambigüedad en los requerimientos
-- Riesgo alto en producción
+### Paso 2 — Contexto del proyecto
 
-**Si no hay cache** → siempre Opus (exploración completa del proyecto).
-**Si hay cache + ticket cumple algún criterio** → Opus.
-**Si hay cache + ticket no cumple ningún criterio** → Sonnet.
+Leé `.claude/project-context.md` (ignoralo si tiene más de 30 días) y `.claude/patterns.md` (no vence).
 
-### Paso 5 — Lanzá el agente
+Cruzá los patrones documentados con el ticket antes de explorar. Si un patrón ya cubre lo que el ticket pide, reusá la referencia en vez de releer esos archivos.
 
-Usá el `Agent` tool con el modelo adecuado (paso 4) y este prompt:
+### Paso 3 — Decidí si delegás
 
+| Situación | Cómo |
+|---|---|
+| Hay cache + ticket simple | **Inline, sin agente.** Spawnear cuesta más de lo que ahorra. |
+| Hay cache + ticket complejo | Agente con **Opus** |
+| No hay cache | Agente con **Opus** (exploración completa) |
+
+Un ticket es complejo si cumple alguno: más de 10 archivos afectados, cambios de schema, múltiples servicios, integraciones externas, auth o permisos, conflicto con la arquitectura, requerimientos ambiguos, o riesgo alto en producción.
+
+Cuando delegues, pasale al agente el contenido del ticket, el contexto cacheado, los patrones conocidos y el formato del Paso 4 tal cual.
+
+### Paso 4 — Formato de salida
+
+El entregable depende de la plataforma, porque el lector también:
+
+- **Azure DevOps** → una estimación para acordar, que se pega en la task de análisis. Dos partes.
+- **Trello / Jira** → un plan de implementación, a punto de pasarse a un agente. Sin horas.
+
+En los dos casos la salida es corta. Las dos son un resumen, no una explicación — el razonamiento va en la sección privada del final, nunca en el bloque copiable.
+
+Registro: castellano rioplatense natural y profesional. Impersonal o en primera del plural, nunca tuteando ni voseando al lector.
+
+#### Azure — Parte 1: Análisis y estimación
+
+Sin jerga. **Nunca** nombres un archivo, función, variable, action ni permiso acá.
+
+Dividido por área, y **solo las áreas que tienen trabajo real**: `Frontend`, `Backend`, `QA`, `Infra`. Una sola área está perfecto. Por área: las horas, y **una o dos líneas** de qué se hace. Si lo que pide el ticket no coincide con lo que el sistema necesita, comprimilo en una cláusula.
+
+```markdown
+## Análisis y estimación
+
+**Frontend** · 6 h
+Una o dos líneas de qué se va a hacer. Nada más.
+
+**QA** · 2 h
+Una o dos líneas de qué se verifica.
+
+**Total: 8 h — S**
+```
+
+**Cómo estimar las horas**
+
+- Calculá el tiempo realista, sumale como un tercio de colchón y redondeá para arriba a la hora entera. Las estimaciones fallan para abajo mucho más seguido que para arriba, y ese colchón es justamente el punto.
+- Ningún área baja de `1 h`. **QA va siempre** — si el ticket no necesita QA, leíste mal el ticket.
+- Después del total, la talla: `XS`, `S`, `M`, `L`, `XL`. Si da `XL`, agregá una línea proponiendo cómo partirlo.
+
+#### Azure — Parte 2: Detalle técnico
+
+Las mismas áreas, en el mismo orden. Dónde se toca y de qué forma — nada más. Una línea por archivo o endpoint: la ruta, qué cambia y el mecanismo, en una sola oración. Dos o tres líneas por área. Si un paso tiene un orden que importa o una trampa, va como media cláusula en la misma línea.
+
+```markdown
+## Detalle técnico
+
+**Frontend**
+`ruta/archivo.jsx` (línea 123) — qué se cambia y cómo. Si hay trampa, media línea.
+
+**Backend**
+`POST /recurso` — qué devuelve y cómo se resuelve.
+**Base de datos** — nueva columna `tabla.columna`, nullable, migración reversible.
+**Activities / jobs** — ninguna.
+
+**QA**
+Qué se prueba y qué se espera, en una o dos líneas.
+
+**Infra**
+Variables, permisos o pasos de despliegue nuevos.
+```
+
+**Omitir un área sin trabajo**, con una excepción: el trabajo que cae en un repo en el que no estás —típicamente Backend— conserva su bloque, marcado `REQUERIDO, fuera de este repo`. Eso es un bloqueante, y esconderlo es como se pierde un sprint. `**Base de datos**` y `**Activities / jobs**` aparecen solo si el ticket los toca; `**Infra**` solo para variables de entorno, credenciales, permisos, orden de despliegue o migraciones que corren antes del deploy.
+
+#### Trello / Jira — Plan de implementación
+
+**Sin horas.** Estos usuarios no están estimando para un tablero: están por pasarle el trabajo a un agente de código (Codex, Claude Code, Cursor, el que usen).
+
+Todo el valor del análisis es que la exploración del codebase ya está hecha. El plan es la forma en que esa exploración le llega al agente para que no la rehaga desde cero. Escribilo para pegarse tal cual en el prompt de un agente, y que se sostenga solo: un agente que arranca en frío con ese texto tiene que saber a dónde ir, qué reusar y qué no tocar.
+
+```markdown
+## Plan de implementación
+
+**Contexto**
+Una o dos líneas: lo que hay que saber del proyecto para esta tarea.
+
+**Pasos**
+1. `ruta/archivo.jsx:123` — qué cambiar y cómo.
+2. `ruta/otro.js` — qué cambiar y cómo. Copiar el enfoque de `ruta/referente.jsx`.
+
+**No toques**
+- Lo que parece la solución obvia y rompe otra cosa, con el motivo en media línea.
+
+**Verificación**
+Cómo se comprueba que quedó bien.
+
+**Talla:** M
+```
+
+**Reglas**
+
+- Los pasos van en orden de dependencia, numerados. **Cada paso nombra una ruta exacta** — si no podés, no exploraste lo suficiente en el Paso 2.
+- Reusar antes que inventar: si el repo ya resuelve algo equivalente, nombrá ese archivo en el paso. Un agente librado a inventar, inventa.
+- `No toques` lleva lo que el análisis descubrió y el agente no puede ver: radio de explosión, un permiso compartido, un orden que importa, un atajo tentador que rompe otra cosa. Es el bloque de más valor del plan. Omitilo solo si de verdad no hay nada.
+- `Verificación` es un comando para correr o algo concreto para observar — no "probar que funcione".
+- Máximo ~8 pasos. Más que eso y el ticket hay que partirlo: decilo en una línea en vez de escribir el paso 9.
+- Sin relleno. Un agente parsea estructura, no adjetivos.
+
+#### Después del entregable — notas privadas
+
+Cerrá con un separador y un título que deje claro que esto **no** va en lo que se copia, y después `Patrones`, `Riesgos` y `Dudas`. Una o dos líneas cada uno, y omitir la sección que no tenga nada real. Un riesgo sin mitigación es una Duda, no un riesgo.
+
+```markdown
 ---
+### Para vos — no va en la tarjeta
 
-You are a Senior Software Analyst and Technical Lead.
-Your job: analyze the ticket and produce the smallest possible output with all critical implementation information.
+**Patrones**
+`ruta/al/referente.jsx` — qué copiar de ahí y por qué aplica.
 
-Rules:
-- Think deeply, answer briefly. Bullets over paragraphs.
-- Mention exact files whenever possible.
-- Reuse existing patterns — never introduce new ones.
-- Maximum 15 bullet points total across all sections.
-- No code. No architecture essays. No reasoning narration.
-- Output in Spanish.
+**Riesgos**
+El riesgo concreto y cómo se mitiga.
 
-[INCLUIR SI HAY CONTEXTO CACHEADO:]
-**Contexto del proyecto (cacheado):**
-{contenido de .claude/project-context.md}
+**Dudas**
+La pregunta que bloquea, y qué cambia según la respuesta.
+```
 
-Usá este contexto para encontrar eficientemente los archivos específicos del ticket sin explorar todo el codebase desde cero. Aun así, inspeccioná los archivos relevantes para el ticket antes de responder.
+Las Dudas con opciones discretas van por `AskUserQuestion` (máx 4 por pregunta) y solo las que bloquean de verdad. Las genuinamente abiertas van numeradas en el mismo mensaje. Nunca gastes un turno aparte en una pregunta que no bloquea.
 
-[INCLUIR SI HAY patterns.md:]
-**Patrones conocidos del proyecto:**
-{contenido de .claude/patterns.md}
+Cerrá con una línea ofreciendo publicar el bloque copiable como comentario —`add_azure_comment`, `add_trello_comment` o `add_jira_comment`— y arrancar la implementación. Nunca publiques la sección privada. No publiques nada sin que te lo pidan, y si las credenciales son de solo lectura avisalo al ofrecer, no después de que falle la llamada.
 
-Antes de explorar el codebase, cruzá estos patrones con el ticket. Si el ticket involucra una funcionalidad cuyo patrón ya está documentado, reutilizá la referencia directamente sin re-explorar esos archivos.
+### Paso 5 — Guardá el cache (solo si exploraste desde cero)
 
-[INCLUIR SI NO HAY CONTEXTO CACHEADO:]
-No hay contexto cacheado. Explorá el proyecto primero usando `find`, `ls`, `Read`.
-Entendé: estructura de carpetas, tech stack, convenciones de nombres, patrones de código, organización de funciones.
-Al final de tu respuesta incluí una sección `## Contexto del proyecto`: resumen estructurado en ≤200 palabras (tech stack, carpetas, convenciones clave, patrones importantes). Solo lo esencial.
-
-**Ticket:**
-{contenido del ticket}
-
-**Antes de responder:**
-0. Si hay patrones cacheados, cruzalos con el ticket antes de explorar el codebase. Reutilizá referencias documentadas directamente.
-1. Analizá el ticket.
-2. Inspeccioná el codebase (guiado por el contexto cacheado si existe).
-3. Encontrá archivos, servicios, APIs, modelos, componentes e implementaciones existentes relacionados.
-4. Identificá patrones reutilizables ya usados en el repositorio.
-5. Detectá riesgos y blockers.
-6. Detectá requerimientos faltantes o ambigüedades.
-7. Proponé la solución más simple alineada con la arquitectura actual.
-8. Evitá introducir patrones nuevos si los existentes alcanzan.
-
-**Output ÚNICAMENTE en este formato:**
-
-## Resumen
-<1-2 oraciones>
-
-## Impacto
-- archivo/ruta
-- archivo/ruta
-
-## Implementación
-- Paso 1
-- Paso 2
-- Paso 3
-
-## Patrones encontrados
-*(omitir si no hay patrones reutilizables relevantes para el ticket)*
-**Referencia:** ruta/al/componente-o-módulo
-**Archivos:** archivo1.js, archivo2.js
-**Uso:** Para qué sirve este patrón en el contexto del ticket.
-
-## Riesgos
-*(omitir si no hay riesgos reales)*
-- Riesgo 1
-
-## Dudas
-*(omitir si los requerimientos son claros)*
-- Pregunta 1
-
-## Estimación
-S | M | L | XL
-
----
-
-### Paso 6A — Guardá el contexto inicial (solo si el agente exploró)
-Si no había cache, escribí los dos archivos:
-
-**`.claude/project-context.md`:**
+**`.claude/project-context.md`**
 ```
 <!-- Generado: YYYY-MM-DD -->
-[contenido de la sección ## Contexto del proyecto del agente]
+[Stack, estructura de carpetas, convenciones clave, patrones importantes. Máx 200 palabras.]
 ```
 
-**`.claude/patterns.md`** (primera versión con los patrones más importantes detectados durante la exploración):
+**`.claude/patterns.md`** (solo si encontraste patrones reusables)
 ```
 <!-- Generado: YYYY-MM-DD | Última actualización: YYYY-MM-DD -->
-[patrones concretos reutilizables encontrados — misma sección ## Patrones encontrados del agente, o los más relevantes de la exploración inicial]
+[Patrones concretos reusables]
 ```
 
+Si el cache ya existía y encontraste un patrón **nuevo**, agregalo al final y actualizá la fecha. Guardá un patrón solo si aparece en 2+ archivos, es un flujo complejo completo (auth, upload, paginación), o fue la referencia principal para este ticket.
+
 Ambos archivos están en `.gitignore` — son locales de cada dev.
-
-### Paso 6B — Actualizá patrones incrementalmente (solo si hubo nuevos)
-Si había cache + el agente reportó `## Patrones encontrados`:
-1. Leer `.claude/patterns.md`. Si no existe aún (primera vez con este feature), crear el archivo con solo el encabezado: `<!-- Generado: YYYY-MM-DD | Última actualización: YYYY-MM-DD -->`.
-2. Para cada patrón reportado:
-   - Si **no existe** en el archivo: agregarlo al final.
-   - Si **ya existe**: actualizar solo si la nueva info aporta valor concreto (archivos adicionales, mejor descripción).
-   - Si es duplicado sin valor nuevo: ignorar.
-3. Actualizar el timestamp `Última actualización` en el encabezado.
-
-Si el agente **no** reportó `## Patrones encontrados`: no modificar `patterns.md`.
-
-**Criterio de guardado** — guardar solo si el patrón cumple al menos uno:
-- Aparece en ≥ 2 archivos del proyecto
-- Es un flujo complejo y completo (auth, upload, websocket, pagination)
-- Es la referencia primaria que el agente usó para implementar el ticket
-
-### Paso 7 — Presentá el análisis
-Mostrá el análisis al usuario (sin la sección `## Contexto del proyecto`).
-La sección `## Patrones encontrados` sí se muestra al usuario cuando aparece en el análisis.
-
-### Paso 8 — Dudas abiertas
-Si hay "Dudas", presentalas con `AskUserQuestion`:
-- Preguntas con opciones discretas (sí/no, A/B) → opciones seleccionables (máx 4 por pregunta)
-- Preguntas genuinamente abiertas → numeradas en texto, pedile al usuario que responda con número + respuesta
-- Priorizá las que bloquean el diseño
-
-### Paso 9 — Handoff a /sdd-new
-Una vez resueltas las dudas, ofrecé:
-"¿Querés arrancar la implementación con `/sdd-new`? El contexto del análisis ya está en la conversación."
-
-Si dice que sí:
-> Escribí `/sdd-new` para arrancar. No hace falta que pegues nada — el skill toma el contexto de la conversación automáticamente.
-
-**No intentes invocar el skill automáticamente** (tiene `disable-model-invocation`). El usuario lo inicia manualmente.

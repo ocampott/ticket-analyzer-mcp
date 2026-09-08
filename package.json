@@ -1,16 +1,36 @@
 {
   "name": "ticket-analyzer-mcp",
-  "version": "1.2.4",
-  "description": "MCP server to read Trello cards and Jira issues",
+  "version": "2.0.0",
+  "description": "Client-neutral MCP server for Trello cards, Jira issues and Azure DevOps work items",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ocampott/ticket-analyzer-mcp.git"
+  },
+  "homepage": "https://github.com/ocampott/ticket-analyzer-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/ocampott/ticket-analyzer-mcp/issues"
+  },
   "type": "module",
+  "keywords": ["pi-package"],
   "main": "dist/index.js",
   "bin": {
     "ticket-analyzer-mcp": "bin/pm-mcp.js"
   },
+  "pi": {
+    "extensions": ["./extensions/ticket-analyzer.js"],
+    "skills": ["./skills/analyze-ticket", "./skills/search", "./skills/status"]
+  },
   "files": [
     "dist/",
     "bin/",
+    "extensions/",
     "skills/",
+    "integrations/",
+    "docs/agent-workflow.md",
+    "docs/codex-install.md",
+    "docs/pi-install.md",
+    "AGENTS.md",
+    "CHANGELOG.md",
     ".claude-plugin/",
     ".mcp.json"
   ],
