@@ -9,7 +9,7 @@ Use Node.js 18 or newer. Setup requires a TTY and writes credentials only to the
 Install one machine-wide package version:
 
 ```bash
-npm install --global ticket-analyzer-mcp@2.3.0
+npm install --global ticket-analyzer-mcp@2.3.1
 ```
 
 From the project that should own the credentials, run the published setup wizard:
@@ -39,7 +39,7 @@ codex mcp add ticket-analyzer \
 
 This uses only the non-secret `TICKET_ANALYZER_ENV_FILE` setting. `codex mcp remove ticket-analyzer` removes the registration when needed. Restart Codex after changing the registration or updating the package.
 
-Update the central version with `npm update --global ticket-analyzer-mcp`. For a central pin, install an exact version such as `npm install --global ticket-analyzer-mcp@2.3.0`. The project-local alternative, `npm install ticket-analyzer-mcp@2.3.0`, is isolated to that project and is not the recommended central policy.
+Update the central version with `npm update --global ticket-analyzer-mcp`. For a central pin, install an exact version such as `npm install --global ticket-analyzer-mcp@2.3.1`. The project-local alternative, `npm install ticket-analyzer-mcp@2.3.1`, is isolated to that project and is not the recommended central policy.
 
 Do not replace the global command with a checkout, filesystem package path, or direct Node entrypoint.
 

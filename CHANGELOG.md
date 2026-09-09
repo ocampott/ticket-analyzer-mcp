@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.3.1] - 2026-09-09
+
+### Changed
+
+- Added reproducible local metadata ignores for worktrees, caches, and OS files while preserving the shared `.claude/skills-manifest.md`.
+
 ## [2.3.0] - 2026-09-09
 
 ### Added

@@ -2,7 +2,7 @@
 
 **Instruction adapter version: 3.0.0**
 
-This project uses `ticket-analyzer-mcp` 2.3.0. Apply these instructions to natural-language requests; no slash command is required. The package canonical workflow is [`../../AGENTS.md`](../../AGENTS.md) in this distribution; when copying this template, preserve the consumer project's local `AGENTS.md` safety and local instructions. Do not treat the consumer `AGENTS.md` as package authority.
+This project uses `ticket-analyzer-mcp` 2.3.1. Apply these instructions to natural-language requests; no slash command is required. The package canonical workflow is [`../../AGENTS.md`](../../AGENTS.md) in this distribution; when copying this template, preserve the consumer project's local `AGENTS.md` safety and local instructions. Do not treat the consumer `AGENTS.md` as package authority.
 
 ## Ticket analysis
 

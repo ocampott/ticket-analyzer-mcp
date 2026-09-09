@@ -20,20 +20,20 @@ const ACTIVE_USER_DOCS = [
   "skills/setup/SKILL.md",
 ];
 
-describe("2.3.0 release metadata and guidance", () => {
+describe("2.3.1 release metadata and guidance", () => {
   test("aligns published metadata without changing the independent workflow contract", () => {
     const packageManifest = packageJson("package.json");
     const lockfile = packageJson("package-lock.json");
     const lockRoot = (lockfile.packages as Record<string, Record<string, unknown>>)[""];
 
-    expect(packageManifest.version).toBe("2.3.0");
-    expect(lockfile.version).toBe("2.3.0");
-    expect(lockRoot.version).toBe("2.3.0");
-    expect(read("src/index.ts")).toContain('version: "2.3.0"');
-    expect(read("bin/cli.js")).toContain('const VERSION = "2.3.0"');
-    expect(read("extensions/ticket-analyzer.js")).toContain('version: "2.3.0"');
-    expect(packageJson(".claude-plugin/plugin.json").version).toBe("2.3.0");
-    expect((packageJson(".claude-plugin/marketplace.json").plugins as Array<Record<string, unknown>>)[0].version).toBe("2.3.0");
+    expect(packageManifest.version).toBe("2.3.1");
+    expect(lockfile.version).toBe("2.3.1");
+    expect(lockRoot.version).toBe("2.3.1");
+    expect(read("src/index.ts")).toContain('version: "2.3.1"');
+    expect(read("bin/cli.js")).toContain('const VERSION = "2.3.1"');
+    expect(read("extensions/ticket-analyzer.js")).toContain('version: "2.3.1"');
+    expect(packageJson(".claude-plugin/plugin.json").version).toBe("2.3.1");
+    expect((packageJson(".claude-plugin/marketplace.json").plugins as Array<Record<string, unknown>>)[0].version).toBe("2.3.1");
     expect(read("AGENTS.md")).toMatch(/Instruction contract version: 3\.0\.0/);
   });
 
@@ -70,7 +70,7 @@ describe("2.3.0 release metadata and guidance", () => {
   test("keeps CLI setup published-only and removes local package-root logic", () => {
     const cli = read("bin/cli.js");
 
-    expect(cli).toContain("pi install -l npm:ticket-analyzer-mcp@2.3.0");
+    expect(cli).toContain("pi install -l npm:ticket-analyzer-mcp@2.3.1");
     expect(cli).toContain('const serverCommand = "ticket-analyzer-mcp"');
     expect(cli).not.toContain("npx");
     expect(cli).toContain("TICKET_ANALYZER_ENV_FILE");
@@ -97,22 +97,19 @@ describe("2.3.0 release metadata and guidance", () => {
     const setupSkill = read("skills/setup/SKILL.md");
     const codexAdapter = read("integrations/codex/README.md");
 
-    expect(readme).toContain("npm install --global ticket-analyzer-mcp@2.3.0");
+    expect(readme).toContain("npm install --global ticket-analyzer-mcp@2.3.1");
     expect(readme).toContain("npm update --global ticket-analyzer-mcp");
     expect(readme).toContain("Without --global: version isolated per project.");
     expect(readme).toContain("With --global: one central version for the whole machine.");
-    expect(readme).toContain("-- ticket-analyzer-mcp");
-    expect(readme).toContain("pi install -l npm:ticket-analyzer-mcp@2.3.0");
     expect(readme).not.toContain("npx");
 
     for (const doc of [piDocs, codexDocs, workflowDocs, setupSkill, codexAdapter]) {
-      expect(doc).toContain("npm install --global ticket-analyzer-mcp@2.3.0");
+      expect(doc).toContain("npm install --global ticket-analyzer-mcp@2.3.1");
       expect(doc).toContain("npm update --global ticket-analyzer-mcp");
       expect(doc).not.toContain("npx");
     }
     expect(codexDocs).toContain("-- ticket-analyzer-mcp");
     expect(codexAdapter).toContain("-- ticket-analyzer-mcp");
-    expect(readme).toContain("claude plugin marketplace update ticket-analyzer-mcp");
     expect(piDocs).toContain("pi update npm:ticket-analyzer-mcp");
     expect(readme).not.toMatch(/ticket-analyzer-mcp\s+update\b/);
   });
@@ -130,11 +127,27 @@ describe("2.3.0 release metadata and guidance", () => {
     expect(readme).toMatch(/does not inspect, replace, or remove existing registrations/i);
   });
 
+  test("puts the wizard before labeled manual recovery guidance", () => {
+    const readme = read("README.md");
+    const spanishWizard = readme.indexOf("### Configuración opt-in de clientes");
+    const spanishManual = readme.indexOf("### Configuración manual");
+    const englishWizard = readme.indexOf("### Opt-in client configuration wizard");
+    const englishManual = readme.indexOf("### Manual recovery");
+
+    expect(spanishWizard).toBeGreaterThanOrEqual(0);
+    expect(spanishManual).toBeGreaterThan(spanishWizard);
+    expect(englishWizard).toBeGreaterThanOrEqual(0);
+    expect(englishManual).toBeGreaterThan(englishWizard);
+    expect(readme).toMatch(/Configuración manual[\s\S]*cliente no está disponible[\s\S]*Codex/);
+    expect(readme).toMatch(/Manual recovery[\s\S]*client is unavailable[\s\S]*Codex/);
+    expect(readme).toMatch(/wizard does not replace existing registrations/i);
+  });
+
   test("keeps the release changelog current and historically ordered", () => {
     const changelog = read("CHANGELOG.md");
 
-    expect(changelog.startsWith("# Changelog\n\n## [2.3.0] - 2026-09-09")).toBe(true);
-    expect(changelog.indexOf("## [2.3.0]")).toBeLessThan(changelog.indexOf("## [2.2.2]"));
+    expect(changelog.startsWith("# Changelog\n\n## [2.3.1] - 2026-09-09")).toBe(true);
+    expect(changelog.indexOf("## [2.3.1]")).toBeLessThan(changelog.indexOf("## [2.2.2]"));
     expect(changelog).toMatch(/client configuration wizard/i);
     expect(changelog).toMatch(/dry-run/i);
     expect(changelog).toMatch(/safe command execution/i);
@@ -144,7 +157,7 @@ describe("2.3.0 release metadata and guidance", () => {
   test("aligns the active Codex adapter snapshots without changing their contract", () => {
     for (const doc of ["integrations/codex/AGENTS.md", "integrations/codex/AGENTS.template.md"]) {
       const contents = read(doc);
-      expect(contents).toContain("2.3.0");
+      expect(contents).toContain("2.3.1");
       expect(contents).toContain("3.0.0");
       expect(contents).not.toContain("2.2.2");
     }

@@ -24,7 +24,7 @@ describe("ticket-analyzer CLI", () => {
     const output = [];
     await runCli(["--help"], { stdout: { write: (text) => output.push(text) } });
     const text = output.join(" ");
-    expect(text).toContain("ticket-analyzer-mcp 2.3.0");
+    expect(text).toContain("ticket-analyzer-mcp 2.3.1");
     expect(text).toContain("ticket-analyzer-mcp setup");
     expect(text).toContain("--configure-clients");
     expect(text).toMatch(/--dry-run.*does not configure clients/i);
@@ -71,7 +71,7 @@ describe("ticket-analyzer CLI", () => {
     expect(promptAdapter.providers).toHaveBeenCalledTimes(1);
     expect(promptAdapter.client).toHaveBeenCalledTimes(1);
     const text = output.join(" ");
-    expect(text).toContain("Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.3.0");
+    expect(text).toContain("Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.3.1");
     expect(text).not.toMatch(/node .*ticket-analyzer-mcp.*pm-mcp\.js/);
     expect((await stat(path.join(cwd, ".env"))).mode & 0o777).toBe(0o600);
   });
@@ -210,7 +210,7 @@ describe("ticket-analyzer CLI", () => {
     });
 
     const text = output.join(" ");
-    expect(text).toContain("Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.3.0");
+    expect(text).toContain("Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.3.1");
     expect(text).not.toContain(packageRoot);
   });
 
@@ -375,7 +375,7 @@ describe("ticket-analyzer CLI", () => {
     expect(text).toMatch(/available.*Claude Code/i);
     expect(text).toContain("claude plugin marketplace add ocampott/ticket-analyzer-mcp");
     expect(text).toContain("codex mcp add ticket-analyzer");
-    expect(text).toContain("pi install -l npm:ticket-analyzer-mcp@2.3.0");
+    expect(text).toContain("pi install -l npm:ticket-analyzer-mcp@2.3.1");
     expect(text).toMatch(/dry-run.*does not configure clients/i);
     expect(promptAdapter.confirmClient).not.toHaveBeenCalled();
     expect(runCommand).not.toHaveBeenCalled();
@@ -445,7 +445,7 @@ describe("ticket-analyzer CLI", () => {
       },
       {
         file: "/bin/pi",
-        args: ["install", "-l", "npm:ticket-analyzer-mcp@2.3.0"],
+        args: ["install", "-l", "npm:ticket-analyzer-mcp@2.3.1"],
         options: expect.objectContaining({ shell: false }),
       },
     ]);

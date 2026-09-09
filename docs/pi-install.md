@@ -9,7 +9,7 @@ The published Pi package includes an extension that starts the MCP server and ex
 The setup, diagnostics, and standalone server CLI use one machine-wide npm version:
 
 ```bash
-npm install --global ticket-analyzer-mcp@2.3.0
+npm install --global ticket-analyzer-mcp@2.3.1
 ticket-analyzer-mcp setup
 ticket-analyzer-mcp status
 ticket-analyzer-mcp doctor
@@ -22,7 +22,7 @@ Update that central CLI version with:
 npm update --global ticket-analyzer-mcp
 ```
 
-For a central version pin, install an exact version such as `npm install --global ticket-analyzer-mcp@2.3.0`. The alternative `npm install ticket-analyzer-mcp@2.3.0` is isolated to one project and is not the recommended central policy.
+For a central version pin, install an exact version such as `npm install --global ticket-analyzer-mcp@2.3.1`. The alternative `npm install ticket-analyzer-mcp@2.3.1` is isolated to one project and is not the recommended central policy.
 
 Setup writes credentials to the project-local `.env`; it does not modify Pi settings, execute client commands, or print secrets. The server loads `TICKET_ANALYZER_ENV_FILE` when set, otherwise `<cwd>/.env`; real environment variables take precedence.
 
@@ -40,7 +40,7 @@ Normal mode detects available clients, prints one non-secret plan, and asks for 
 Pi is managed by Pi, not by the npm global CLI. Install the published package with its exact aligned version:
 
 ```bash
-pi install -l npm:ticket-analyzer-mcp@2.3.0
+pi install -l npm:ticket-analyzer-mcp@2.3.1
 ```
 
 Update the Pi package separately, then restart or reload Pi:

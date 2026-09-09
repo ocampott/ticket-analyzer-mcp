@@ -7,7 +7,7 @@
 Install one machine-wide published CLI version:
 
 ```bash
-npm install --global ticket-analyzer-mcp@2.3.0
+npm install --global ticket-analyzer-mcp@2.3.1
 ```
 
 From the project that should own credentials, run:
@@ -16,7 +16,7 @@ From the project that should own credentials, run:
 ticket-analyzer-mcp setup
 ```
 
-Setup writes selected credentials to the ignored project-local `.env`, preserves unrelated keys, and never modifies client configuration or prints secrets. Users update the central version with `npm update --global ticket-analyzer-mcp`; reinstall an exact global version to pin it. The alternative `npm install ticket-analyzer-mcp@2.3.0` is isolated to one project.
+Setup writes selected credentials to the ignored project-local `.env`, preserves unrelated keys, and never modifies client configuration or prints secrets. Users update the central version with `npm update --global ticket-analyzer-mcp`; reinstall an exact global version to pin it. The alternative `npm install ticket-analyzer-mcp@2.3.1` is isolated to one project.
 
 Client configuration is explicitly opt-in:
 

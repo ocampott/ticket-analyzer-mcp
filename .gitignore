@@ -2,6 +2,11 @@ node_modules/
 dist/
 .env
 *.js.map
+# Local metadata
+.DS_Store
 .claude/project-context.md
-# Local Pi runtime state
+.claude/settings.local.json
+.claude/worktrees/
+.claude/patterns.md
+.superpowers/
 .atl/

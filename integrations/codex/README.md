@@ -7,7 +7,7 @@
 Install one machine-wide published version:
 
 ```bash
-npm install --global ticket-analyzer-mcp@2.3.0
+npm install --global ticket-analyzer-mcp@2.3.1
 ```
 
 From the target project, run the published setup wizard:
@@ -35,7 +35,7 @@ codex mcp add ticket-analyzer \
 
 The Codex command follows `codex mcp add <NAME> --env KEY=VALUE -- COMMAND...`; use `codex mcp remove ticket-analyzer` to remove a registration. Never put provider credentials in Codex configuration or shell history. The wizard does not inspect, replace, or remove existing registrations; update them manually when needed and restart Codex after configuration or updates.
 
-Restart Codex after registering the server or updating the package. Update the central version with `npm update --global ticket-analyzer-mcp`; an exact global install such as `npm install --global ticket-analyzer-mcp@2.3.0` pins it. The project-local alternative `npm install ticket-analyzer-mcp@2.3.0` is isolated to that project.
+Restart Codex after registering the server or updating the package. Update the central version with `npm update --global ticket-analyzer-mcp`; an exact global install such as `npm install --global ticket-analyzer-mcp@2.3.1` pins it. The project-local alternative `npm install ticket-analyzer-mcp@2.3.1` is isolated to that project.
 
 Do not replace the global command with a checkout, filesystem path, or direct Node entrypoint.
 

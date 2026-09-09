@@ -6,7 +6,7 @@ import process from "node:process";
 import { checkbox, confirm, input as inquirerInput, password } from "@inquirer/prompts";
 import dotenv from "dotenv";
 
-const VERSION = "2.3.0";
+const VERSION = "2.3.1";
 const ENV_FILE_VARIABLE = "TICKET_ANALYZER_ENV_FILE";
 const PROVIDERS = {
   trello: ["TRELLO_API_KEY", "TRELLO_TOKEN"],
@@ -109,7 +109,7 @@ const CLIENT_COMMANDS = {
   codex: (filePath) => [
     ["mcp", "add", "ticket-analyzer", "--env", `${ENV_FILE_VARIABLE}=${filePath}`, "--", "ticket-analyzer-mcp"],
   ],
-  pi: () => [["install", "-l", "npm:ticket-analyzer-mcp@2.3.0"]],
+  pi: () => [["install", "-l", "npm:ticket-analyzer-mcp@2.3.1"]],
 };
 
 export function parseSetupArgs(args) {
@@ -507,7 +507,7 @@ export async function setupCommand(options = {}) {
       for (const client of clients) {
         writeOutput(stdout, `${CLIENT_LABELS[client]}:`);
         if (client === "pi") {
-          writeOutput(stdout, "Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.3.0");
+          writeOutput(stdout, "Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.3.1");
         } else if (client === "codex") {
           const serverCommand = "ticket-analyzer-mcp";
           writeOutput(stdout, `Next step for Codex: codex mcp add ticket-analyzer --env ${ENV_FILE_VARIABLE}=${shellQuote(filePath)} -- ${serverCommand}`);
@@ -573,7 +573,7 @@ export async function doctorCommand(options = {}) {
 
 function helpText() {
   return [
-    "ticket-analyzer-mcp 2.3.0",
+    "ticket-analyzer-mcp 2.3.1",
     "",
     "Usage:",
     "  ticket-analyzer-mcp              Start the MCP server over stdio",
