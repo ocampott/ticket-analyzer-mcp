@@ -16,8 +16,55 @@ type AnalyzeTicketArgs = {
   format?: "both" | "json" | "markdown";
 };
 
+/** JSON Schema supported by the SDK 1.29 tool output contract. */
+export const ANALYZE_TICKET_OUTPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    objective: { type: "string" },
+    ticketType: {
+      type: "object",
+      properties: {
+        type: { type: "string" },
+        confidence: { type: "number" },
+        evidence: { type: "array", items: { type: "string" } },
+      },
+      required: ["type", "confidence", "evidence"],
+    },
+    complexity: {
+      type: "object",
+      properties: {
+        level: { type: "string" },
+        confidence: { type: "number" },
+        factors: { type: "array", items: { type: "string" } },
+      },
+      required: ["level", "confidence", "factors"],
+    },
+    businessContext: { type: "string" },
+    technicalContext: { type: "string" },
+    stakeholders: { type: "array", items: { type: "object" } },
+    dependencies: { type: "array", items: { type: "object" } },
+    risks: { type: "array", items: { type: "object" } },
+    missingInformation: { type: "array", items: { type: "object" } },
+    qualityScore: { type: "object" },
+    openQuestions: { type: "array", items: { type: "string" } },
+    constraints: { type: "array", items: { type: "string" } },
+    recommendations: { type: "array", items: { type: "string" } },
+    overallRisk: { type: "string" },
+    blockingIssues: { type: "array", items: { type: "string" } },
+    executiveSummary: { type: "string" },
+    engineerSummary: { type: "string" },
+  },
+  required: [
+    "objective", "ticketType", "complexity", "businessContext", "technicalContext",
+    "stakeholders", "dependencies", "risks", "missingInformation", "qualityScore",
+    "openQuestions", "constraints", "recommendations", "overallRisk", "blockingIssues",
+    "executiveSummary", "engineerSummary",
+  ],
+};
+
 export async function handleAnalyzeTicket(args: AnalyzeTicketArgs): Promise<{
   content: { type: "text"; text: string }[];
+  structuredContent?: Record<string, unknown>;
   isError?: boolean;
 }> {
   const id = args.id;
@@ -57,7 +104,7 @@ export async function handleAnalyzeTicket(args: AnalyzeTicketArgs): Promise<{
     const parts: string[] = [];
     if (format !== "json") parts.push(renderMarkdown(pkg));
     if (format !== "markdown") parts.push("```json\n" + JSON.stringify(pkg, null, 2) + "\n```");
-    return { content: [{ type: "text", text: parts.join("\n\n") }] };
+    return { content: [{ type: "text", text: parts.join("\n\n") }], structuredContent: { ...pkg } };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[analysis] Error: ${message}`);

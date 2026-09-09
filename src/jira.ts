@@ -1,10 +1,13 @@
 import { HttpError, withRetry } from "./retry.js";
+import { assertFiniteInteger } from "./validation.js";
 import { getJiraCustomFields } from "./fields.js";
+import { downloadBytes, mapWithConcurrency } from "./download.js";
 
 export interface JiraImage {
   name: string;
   mimeType: string;
   base64: string;
+  url?: string;
 }
 
 export interface JiraComment {
@@ -24,6 +27,7 @@ export interface JiraIssueResult {
   components: string[];
   description: string;
   comments: JiraComment[];
+  commentPagination: { complete: boolean; nextCursor: string | null; fetched: number; budget: number };
   attachments: { name: string; mimeType: string; url: string }[];
   subtasks: { key: string; summary: string; status: string }[];
   parent: { key: string; summary: string } | null;
@@ -64,50 +68,23 @@ export function isTextAttachment(name: string, mimeType: string): boolean {
 
 export async function downloadJiraText(
   url: string,
-  authHeader: string
+  authHeader: string,
+  allowedOrigins = [configuredJiraOrigin()],
 ): Promise<{ content: string; truncated: boolean } | null> {
   console.error(`[jira] Downloading text attachment: ${url}`);
-  try {
-    const initialResponse = await fetch(url, {
-      headers: { Authorization: authHeader },
-      redirect: "manual",
-    });
-
-    let finalResponse: Response;
-    const status = initialResponse.status;
-    if (status === 301 || status === 302 || status === 307 || status === 308) {
-      const location = initialResponse.headers.get("location");
-      if (!location) {
-        console.error(`[jira] Text redirect without Location header: ${url}`);
-        return null;
-      }
-      finalResponse = await fetch(location);
-    } else if (initialResponse.ok) {
-      finalResponse = initialResponse;
-    } else {
-      console.error(`[jira] Text download failed: HTTP ${status}`);
-      return null;
-    }
-
-    if (!finalResponse.ok) {
-      console.error(`[jira] Text download failed: HTTP ${finalResponse.status}`);
-      return null;
-    }
-
-    let text = await finalResponse.text();
-    const ext = url.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
-    if (ext === "html" || ext === "htm") text = stripHtmlNoise(text);
-    if (text.length > MAX_TEXT_BYTES) {
-      return {
-        content: text.slice(0, MAX_TEXT_BYTES) + "\n[truncado: archivo excede 200 000 caracteres]",
-        truncated: true,
-      };
-    }
-    return { content: text, truncated: false };
-  } catch (err) {
-    console.error(`[jira] Text download error for ${url}:`, err);
-    return null;
-  }
+  const bytes = await downloadBytes(url, {
+    maxBytes: MAX_TEXT_BYTES,
+    allowTruncated: true,
+    headers: { Authorization: authHeader },
+    credentialOrigins: allowedOrigins,
+    allowedOrigins,
+  });
+  if (!bytes) return null;
+  let text = new TextDecoder().decode(bytes);
+  const ext = url.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "html" || ext === "htm") text = stripHtmlNoise(text);
+  const truncated = bytes.byteLength >= MAX_TEXT_BYTES;
+  return { content: truncated ? text + "\n[truncado: archivo excede 200 000 caracteres]" : text, truncated };
 }
 
 function getCredentials(): { host: string; authHeader: string } {
@@ -253,50 +230,27 @@ interface JiraIssueRaw {
 }
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_COMMENT_BUDGET = 200;
+const MAX_SEARCH_RESULTS = 100;
 
-export async function downloadJiraImage(url: string, authHeader: string): Promise<string | null> {
+function configuredJiraOrigin(): string {
+  const { host } = getCredentials();
+  return `https://${host}`;
+}
+
+export async function downloadJiraImage(
+  url: string,
+  authHeader: string,
+  allowedOrigins = [configuredJiraOrigin()],
+): Promise<string | null> {
   console.error(`[jira] Downloading image: ${url}`);
-
-  try {
-    // Use manual redirect so we don't forward the Basic auth header to signed S3 URLs
-    const initialResponse = await fetch(url, {
-      headers: { Authorization: authHeader },
-      redirect: "manual",
-    });
-
-    let finalResponse: Response;
-
-    const status = initialResponse.status;
-    if (status === 301 || status === 302 || status === 307 || status === 308) {
-      const location = initialResponse.headers.get("location");
-      if (!location) {
-        console.error(`[jira] Redirect without Location header: ${url}`);
-        return null;
-      }
-      finalResponse = await fetch(location);
-    } else if (initialResponse.ok) {
-      finalResponse = initialResponse;
-    } else {
-      console.error(`[jira] Image download failed: HTTP ${status}`);
-      return null;
-    }
-
-    if (!finalResponse.ok) {
-      console.error(`[jira] Image download failed: HTTP ${finalResponse.status}`);
-      return null;
-    }
-
-    const buffer = await finalResponse.arrayBuffer();
-    if (buffer.byteLength > MAX_IMAGE_BYTES) {
-      console.error(`[jira] Skipping image > 5MB: ${url}`);
-      return null;
-    }
-
-    return Buffer.from(buffer).toString("base64");
-  } catch (err) {
-    console.error(`[jira] Image download error for ${url}:`, err);
-    return null;
-  }
+  const bytes = await downloadBytes(url, {
+    maxBytes: MAX_IMAGE_BYTES,
+    headers: { Authorization: authHeader },
+    credentialOrigins: allowedOrigins,
+    allowedOrigins,
+  });
+  return bytes ? Buffer.from(bytes).toString("base64") : null;
 }
 
 async function fetchAllComments(
@@ -305,28 +259,31 @@ async function fetchAllComments(
   authHeader: string,
   initial: Omit<RawCommentsPage, "startAt">,
   maxComments?: number
-): Promise<RawComment[]> {
+): Promise<{ comments: RawComment[]; complete: boolean; nextCursor: string | null; budget: number }> {
+  const budget = maxComments ?? MAX_COMMENT_BUDGET;
   if (maxComments !== undefined) {
+    if (maxComments === 0) return { comments: [], complete: true, nextCursor: null, budget };
     if (initial.total <= initial.maxResults) {
-      // All comments are already in initial page — take the last N
-      return initial.comments.slice(Math.max(0, initial.comments.length - maxComments));
+      return {
+        comments: initial.comments.slice(Math.max(0, initial.comments.length - maxComments)),
+        complete: true,
+        nextCursor: null,
+        budget,
+      };
     }
-    // Fetch only the page containing the most recent N comments
     const startAt = Math.max(0, initial.total - maxComments);
     const page = await fetchJira<RawCommentsPage>(
       `${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment?startAt=${startAt}&maxResults=${maxComments}`,
       authHeader
     );
-    return page.comments;
+    return { comments: page.comments.slice(0, maxComments), complete: true, nextCursor: null, budget };
   }
 
   const all = [...initial.comments];
-  if (initial.total <= initial.maxResults) return all;
-
   let startAt = initial.maxResults;
-  while (startAt < initial.total) {
+  while (all.length < budget && startAt < initial.total) {
     const page = await fetchJira<RawCommentsPage>(
-      `${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment?startAt=${startAt}&maxResults=100`,
+      `${baseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment?startAt=${startAt}&maxResults=${Math.min(100, budget - all.length)}`,
       authHeader
     );
     all.push(...page.comments);
@@ -334,7 +291,9 @@ async function fetchAllComments(
     if (page.comments.length === 0) break;
   }
 
-  return all;
+  const comments = all.slice(0, budget);
+  const complete = comments.length >= initial.total;
+  return { comments, complete, nextCursor: complete ? null : String(comments.length), budget };
 }
 
 export async function getJiraIssue(
@@ -343,8 +302,11 @@ export async function getJiraIssue(
   maxComments?: number,
   includeTextAttachments = false
 ): Promise<JiraIssueData> {
+  if (maxComments !== undefined) assertFiniteInteger(maxComments, "max_comments", { min: 0, max: MAX_COMMENT_BUDGET });
+
   const { host, authHeader } = getCredentials();
   const baseUrl = `https://${host}`;
+  const attachmentOrigins = [baseUrl];
   const { sprintField, epicField } = await getJiraCustomFields();
 
   const staticFields = [
@@ -366,7 +328,7 @@ export async function getJiraIssue(
   const f = raw.fields;
 
   const initialComments = f.comment ?? { comments: [], total: 0, maxResults: 0 };
-  const allComments = await fetchAllComments(
+  const commentResult = await fetchAllComments(
     issueKey,
     baseUrl,
     authHeader,
@@ -374,7 +336,7 @@ export async function getJiraIssue(
     maxComments
   );
 
-  const comments: JiraComment[] = allComments.map((c) => ({
+  const comments: JiraComment[] = commentResult.comments.map((c) => ({
     author: c.author.displayName,
     date: c.created,
     text: adfToText(c.body).trim(),
@@ -390,12 +352,14 @@ export async function getJiraIssue(
 
   let images: JiraImage[] = [];
   if (includeImages) {
-    const downloadedImages = await Promise.all(
-      imageAttachments.map(async (a): Promise<JiraImage | null> => {
-        const base64 = await downloadJiraImage(a.content, authHeader);
+    const downloadedImages = await mapWithConcurrency(
+      imageAttachments,
+      3,
+      async (a): Promise<JiraImage | null> => {
+        const base64 = await downloadJiraImage(a.content, authHeader, attachmentOrigins);
         if (!base64) return null;
-        return { name: a.filename, mimeType: a.mimeType, base64 };
-      })
+        return { name: a.filename, mimeType: a.mimeType, base64, url: a.content };
+      }
     );
     images = downloadedImages.filter((img): img is JiraImage => img !== null);
   }
@@ -405,12 +369,14 @@ export async function getJiraIssue(
     const textCandidates = nonImageAttachments.filter((a) =>
       isTextAttachment(a.filename, a.mimeType ?? "")
     );
-    const downloaded = await Promise.all(
-      textCandidates.map(async (a): Promise<TextAttachment | null> => {
-        const result = await downloadJiraText(a.content, authHeader);
+    const downloaded = await mapWithConcurrency(
+      textCandidates,
+      3,
+      async (a): Promise<TextAttachment | null> => {
+        const result = await downloadJiraText(a.content, authHeader, attachmentOrigins);
         if (!result) return null;
         return { name: a.filename, mimeType: a.mimeType, content: result.content, truncated: result.truncated };
-      })
+      }
     );
     textAttachments = downloaded.filter((t): t is TextAttachment => t !== null);
   }
@@ -426,7 +392,13 @@ export async function getJiraIssue(
     components: (f.components ?? []).map((c) => c.name),
     description: f.description ? adfToText(f.description).trim() : "",
     comments,
-    attachments: nonImageAttachments.map((a) => ({
+    commentPagination: {
+      complete: commentResult.complete,
+      nextCursor: commentResult.nextCursor,
+      fetched: commentResult.comments.length,
+      budget: commentResult.budget,
+    },
+    attachments: rawAttachments.map((a) => ({
       name: a.filename,
       mimeType: a.mimeType,
       url: a.content,
@@ -461,6 +433,8 @@ export async function searchJiraIssues(
   jql: string,
   maxResults = 20
 ): Promise<JiraSearchResult> {
+  assertFiniteInteger(maxResults, "max_results", { min: 1, max: MAX_SEARCH_RESULTS });
+
   const { host, authHeader } = getCredentials();
   const baseUrl = `https://${host}`;
 

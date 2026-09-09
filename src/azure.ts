@@ -1,9 +1,12 @@
 import { HttpError, withRetry } from "./retry.js";
+import { assertFiniteInteger } from "./validation.js";
+import { downloadBytes, mapWithConcurrency } from "./download.js";
 
 export interface AzureImage {
   name: string;
   mimeType: string;
   base64: string;
+  url?: string;
 }
 
 export interface AzureComment {
@@ -45,6 +48,7 @@ export interface AzureWorkItemNode {
   acceptanceCriteria: string;
   reproSteps: string;
   comments: AzureComment[];
+  commentPagination?: { complete: boolean; nextCursor: string | null; fetched: number; budget: number };
   attachments: AzureAttachment[];
   children: AzureWorkItemNode[];
   url: string;
@@ -57,6 +61,8 @@ export interface AzureWorkItemResult extends AzureWorkItemNode {
   truncated: boolean;
   /** Total work items in the tree, root included. */
   nodeCount: number;
+  missingChildren: { id: number; reason: "inaccessible" | "depth_cap" | "node_cap" }[];
+  missingLinks: { id: number; relation: "parent" | "related"; reason: "inaccessible" | "node_cap" }[];
 }
 
 // ponytail: TextAttachment / isTextAttachment are also defined in jira.ts and trello.ts.
@@ -72,7 +78,10 @@ const TEXT_MIME_EXACT = new Set(["application/json", "application/sql", "applica
 const TEXT_EXTENSIONS = new Set([".html", ".htm", ".sql", ".txt", ".md", ".json", ".csv", ".xml", ".yaml", ".yml"]);
 const MAX_TEXT_BYTES = 200_000;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const BATCH_LIMIT = 200; // Azure DevOps caps the work item batch endpoint at 200 ids
+const BATCH_LIMIT = 200;
+const MAX_COMMENT_BUDGET = 200;
+const MAX_SEARCH_RESULTS = 100; // Azure DevOps caps the work item batch endpoint at 200 ids
+const AZURE_ATTACHMENT_ORIGIN = "https://dev.azure.com";
 
 const IMAGE_MIME: Record<string, string> = {
   ".png": "image/png",
@@ -306,23 +315,19 @@ async function fetchAzure<T>(url: string, authHeader: string, init?: RequestInit
   });
 }
 
-async function downloadAttachment(url: string, authHeader: string): Promise<ArrayBuffer | null> {
-  try {
-    const response = await fetch(url, { headers: { Authorization: authHeader } });
-    if (!response.ok) {
-      console.error(`[azure] Attachment download failed: HTTP ${response.status}`);
-      return null;
-    }
-    return await response.arrayBuffer();
-  } catch (err) {
-    console.error(`[azure] Attachment download error for ${url}:`, err);
-    return null;
-  }
+async function downloadAttachment(url: string, authHeader: string, maxBytes: number, allowTruncated = false): Promise<Uint8Array | null> {
+  return downloadBytes(url, {
+    maxBytes,
+    allowTruncated,
+    headers: { Authorization: authHeader },
+    credentialOrigins: [AZURE_ATTACHMENT_ORIGIN],
+    allowedOrigins: [AZURE_ATTACHMENT_ORIGIN],
+  });
 }
 
 export async function downloadAzureImage(url: string, authHeader: string): Promise<string | null> {
   console.error(`[azure] Downloading image: ${url}`);
-  const buffer = await downloadAttachment(url, authHeader);
+  const buffer = await downloadAttachment(url, authHeader, MAX_IMAGE_BYTES);
   if (!buffer) return null;
   if (buffer.byteLength > MAX_IMAGE_BYTES) {
     console.error(`[azure] Skipping image > 5MB: ${url}`);
@@ -336,16 +341,16 @@ export async function downloadAzureText(
   authHeader: string
 ): Promise<{ content: string; truncated: boolean } | null> {
   console.error(`[azure] Downloading text attachment: ${url}`);
-  const buffer = await downloadAttachment(url, authHeader);
+  const buffer = await downloadAttachment(url, authHeader, MAX_TEXT_BYTES, true);
   if (!buffer) return null;
 
-  let text = Buffer.from(buffer).toString("utf-8");
+  let text = new TextDecoder().decode(buffer);
   if (/\.html?(\?|$)/i.test(url)) {
     text = text
       .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
       .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
   }
-  if (text.length > MAX_TEXT_BYTES) {
+  if (buffer.byteLength >= MAX_TEXT_BYTES) {
     return {
       content: text.slice(0, MAX_TEXT_BYTES) + "\n[truncado: archivo excede 200 000 caracteres]",
       truncated: true,
@@ -458,8 +463,10 @@ async function collectTree(
   authHeader: string,
   maxDepth: number,
   maxNodes: number
-): Promise<{ nodes: Map<number, RawWorkItem>; truncated: boolean; skipped: Set<number> }> {
+): Promise<{ nodes: Map<number, RawWorkItem>; truncated: boolean; skipped: Set<number>; inaccessible: Set<number>; nodeCapped: Set<number> }> {
   const nodes = new Map<number, RawWorkItem>([[root.id, root]]);
+  const inaccessible = new Set<number>();
+  const nodeCapped = new Set<number>();
   let frontier = childIdsOf(root);
 
   for (let depth = 1; depth <= maxDepth && frontier.length > 0; depth++) {
@@ -479,17 +486,27 @@ async function collectTree(
     const next: number[] = [];
     for (const id of batch) {
       const item = fetched.get(id);
-      if (!item) continue;
+      if (!item) {
+        inaccessible.add(id);
+        continue;
+      }
       nodes.set(id, item);
       next.push(...childIdsOf(item));
     }
-    frontier = [...pending.slice(batch.length), ...next];
+    const remaining = pending.slice(batch.length);
+    if (remaining.length > 0) {
+      for (const id of remaining) nodeCapped.add(id);
+    }
+    frontier = [...remaining, ...next];
+    // Do not carry an unvisited sibling into the next depth. It remains a child at
+    // this depth and must be disclosed as skipped by the node cap.
+    if (remaining.length > 0) break;
   }
 
   // Anything still unvisited means the walk stopped early — on the node cap or the depth cap.
   // Kept apart from "could not be read" so the output can say which one happened.
   const skipped = new Set(frontier.filter((id) => !nodes.has(id)));
-  return { nodes, truncated: skipped.size > 0, skipped };
+  return { nodes, truncated: skipped.size > 0, skipped, inaccessible, nodeCapped };
 }
 
 async function fetchAllComments(
@@ -497,24 +514,30 @@ async function fetchAllComments(
   workItemId: number,
   authHeader: string,
   maxComments?: number
-): Promise<AzureComment[]> {
-  // Azure returns comments newest-first when ordered desc — ask for that so a capped
-  // request gets the most recent N, then flip back to chronological for the reader.
-  const top = maxComments ?? 200;
-  const page = await fetchAzure<RawCommentsPage>(
-    `${baseUrl}/workItems/${workItemId}/comments?$top=${top}&order=desc&api-version=7.1-preview.3`,
-    authHeader
-  );
-
-  // `text` stays raw HTML here — buildNode converts it, so inline-image extraction
-  // happens in one place for descriptions and comments alike.
-  const comments = (page.comments ?? []).map((c) => ({
+): Promise<{ comments: AzureComment[]; pagination: { complete: boolean; nextCursor: string | null; fetched: number; budget: number } }> {
+  const budget = maxComments ?? 200;
+  const rawComments: RawCommentsPage["comments"] = [];
+  let skip = 0;
+  let totalCount = 0;
+  for (let pageNumber = 0; pageNumber < 10 && rawComments.length < budget; pageNumber++) {
+    const top = Math.min(100, budget - rawComments.length);
+    const page = await fetchAzure<RawCommentsPage>(
+      `${baseUrl}/workItems/${workItemId}/comments?$top=${top}&$skip=${skip}&order=desc&api-version=7.1-preview.3`,
+      authHeader
+    );
+    totalCount = page.totalCount ?? rawComments.length;
+    rawComments.push(...(page.comments ?? []));
+    if (!page.comments?.length || rawComments.length >= totalCount) break;
+    skip += page.comments.length;
+  }
+  const comments = rawComments.map((c) => ({
     author: identityName(c.createdBy) ?? "desconocido",
     date: c.createdDate,
     text: c.text ?? "",
   }));
+  const complete = totalCount <= comments.length;
+  return { comments: comments.reverse(), pagination: { complete, nextCursor: complete ? null : String(comments.length), fetched: comments.length, budget } };
 
-  return comments.reverse();
 }
 
 export interface AzureWorkItemData {
@@ -543,6 +566,11 @@ export async function getAzureWorkItem(
   maxDepth = DEFAULT_MAX_DEPTH,
   maxNodes = DEFAULT_MAX_NODES
 ): Promise<AzureWorkItemData> {
+  assertFiniteInteger(workItemId, "work_item_id", { min: 1, max: 10_000_000 });
+  if (maxComments !== undefined) assertFiniteInteger(maxComments, "max_comments", { min: 0, max: MAX_COMMENT_BUDGET });
+  assertFiniteInteger(maxDepth, "max_depth", { min: 0, max: 10 });
+  assertFiniteInteger(maxNodes, "max_nodes", { min: 1, max: 200 });
+
   const { org, project, authHeader } = getCredentials();
   const baseUrl = projectUrl(org, project);
 
@@ -552,16 +580,17 @@ export async function getAzureWorkItem(
     authHeader
   );
 
-  const { nodes, truncated, skipped } = await collectTree(org, raw, authHeader, maxDepth, maxNodes);
+  const { nodes, truncated, skipped, inaccessible, nodeCapped } = await collectTree(org, raw, authHeader, maxDepth, maxNodes);
   console.error(`[azure] Tree: ${nodes.size} work item(s)${truncated ? " (truncado)" : ""}`);
 
   // Comments live on their own endpoint, so this is one call per node — run them together
   const commentsById = new Map<number, AzureComment[]>();
-  await Promise.all(
-    [...nodes.keys()].map(async (id) => {
-      commentsById.set(id, await fetchAllComments(baseUrl, id, authHeader, maxComments));
-    })
-  );
+      const commentPaginationById = new Map<number, { complete: boolean; nextCursor: string | null; fetched: number; budget: number }>();
+  await mapWithConcurrency([...nodes.keys()], 3, async (id) => {
+    const result = await fetchAllComments(baseUrl, id, authHeader, maxComments);
+    commentsById.set(id, result.comments);
+    commentPaginationById.set(id, result.pagination);
+  });
 
   const rootRelations = raw.relations ?? [];
   const relatedIds = rootRelations
@@ -576,12 +605,16 @@ export async function getAzureWorkItem(
       .find((id): id is number => id !== null) ?? num(raw.fields ?? {}, "System.Parent");
 
   // Parent and related items stay summaries on purpose — they are context, not the ticket.
-  const outsideIds = [...relatedIds, ...(parentId !== null ? [parentId] : [])].filter(
+  const outsideIds = [...new Set([...relatedIds, ...(parentId !== null ? [parentId] : [])])].filter(
     (id) => !nodes.has(id)
   );
-  const outside = await fetchWorkItemsBatch(org, outsideIds, authHeader, false);
+  const outsideBudget = Math.max(0, maxNodes - nodes.size);
+  const outsideToFetch = outsideIds.slice(0, outsideBudget);
+  const omittedOutsideIds = new Set(outsideIds.slice(outsideBudget));
+  const outside = await fetchWorkItemsBatch(org, outsideToFetch, authHeader, false);
 
   const summarize = (id: number): AzureLink => {
+    if (omittedOutsideIds.has(id)) return { id, title: `(work item ${id} omitido por max_nodes)`, type: "" };
     const item = nodes.get(id) ?? outside.get(id);
     if (!item) return { id, title: `(work item ${id} inaccesible)`, type: "" };
     return {
@@ -681,7 +714,8 @@ export async function getAzureWorkItem(
         ...c,
         text: render(c.text, `wi${item.id}-com${i + 1}`),
       })),
-      attachments: attachmentsOf(item).filter((a) => !isImageAttachment(a.name)),
+      commentPagination: commentPaginationById.get(item.id),
+      attachments: attachmentsOf(item),
       children,
       url:
         item._links?.html?.href ??
@@ -701,23 +735,23 @@ export async function getAzureWorkItem(
 
   let images: AzureImage[] = [];
   if (includeImages) {
-    const downloaded = await Promise.all(
-      uniqueAttachments
-        .filter((a) => isImageAttachment(a.name))
-        .map(async (a): Promise<AzureImage | null> => {
+    const downloaded = await mapWithConcurrency(
+      uniqueAttachments.filter((a) => isImageAttachment(a.name)),
+      3,
+      async (a): Promise<AzureImage | null> => {
           const base64 = await downloadAzureImage(a.url, authHeader);
-          return base64 ? { name: a.name, mimeType: a.mimeType, base64 } : null;
-        })
+          return base64 ? { name: a.name, mimeType: a.mimeType, base64, url: a.url } : null;
+      }
     );
     // Images referenced by URL from a body but never linked as an AttachedFile relation
     const attachedUrls = new Set(uniqueAttachments.map((a) => a.url));
-    const fetchedRefs = await Promise.all(
-      referencedImages
-        .filter((ref) => !attachedUrls.has(ref.url))
-        .map(async (ref): Promise<AzureImage | null> => {
+    const fetchedRefs = await mapWithConcurrency(
+      referencedImages.filter((ref) => !attachedUrls.has(ref.url)),
+      3,
+      async (ref): Promise<AzureImage | null> => {
           const base64 = await downloadAzureImage(ref.url, authHeader);
-          return base64 ? { name: ref.name, mimeType: mimeFromName(ref.name), base64 } : null;
-        })
+          return base64 ? { name: ref.name, mimeType: mimeFromName(ref.name), base64, url: ref.url } : null;
+      }
     );
 
     const attached = downloaded.filter((img): img is AzureImage => img !== null);
@@ -730,17 +764,28 @@ export async function getAzureWorkItem(
 
   let textAttachments: TextAttachment[] = [];
   if (includeTextAttachments) {
-    const downloaded = await Promise.all(
-      uniqueAttachments
-        .filter((a) => !isImageAttachment(a.name) && isTextAttachment(a.name, a.mimeType))
-        .map(async (a): Promise<TextAttachment | null> => {
+    const downloaded = await mapWithConcurrency(
+      uniqueAttachments.filter((a) => !isImageAttachment(a.name) && isTextAttachment(a.name, a.mimeType)),
+      3,
+      async (a): Promise<TextAttachment | null> => {
           const result = await downloadAzureText(a.url, authHeader);
           if (!result) return null;
           return { name: a.name, mimeType: a.mimeType, content: result.content, truncated: result.truncated };
-        })
+      }
     );
     textAttachments = downloaded.filter((t): t is TextAttachment => t !== null);
   }
+
+  const missingLinks = [
+    ...relatedIds.map((id) => ({ id, relation: "related" as const })),
+    ...(parentId !== null ? [{ id: parentId, relation: "parent" as const }] : []),
+  ]
+    .filter(({ id }) => !nodes.has(id) && (omittedOutsideIds.has(id) || !outside.has(id)))
+    .map(({ id, relation }) => ({
+      id,
+      relation,
+      reason: omittedOutsideIds.has(id) ? "node_cap" as const : "inaccessible" as const,
+    }));
 
   const workItem: AzureWorkItemResult = {
     ...rootNode,
@@ -748,6 +793,8 @@ export async function getAzureWorkItem(
     related: relatedIds.map(summarize),
     truncated,
     nodeCount: nodes.size,
+    missingChildren: [...[...inaccessible].map((id) => ({ id, reason: "inaccessible" as const }),), ...[...skipped].filter((id) => !inaccessible.has(id)).map((id) => ({ id, reason: nodeCapped.has(id) || nodes.size >= maxNodes ? "node_cap" as const : "depth_cap" as const }))],
+    missingLinks,
   };
 
   return { workItem, images, textAttachments };
@@ -771,6 +818,8 @@ export async function searchAzureWorkItems(
   wiql: string,
   maxResults = 20
 ): Promise<AzureSearchResult> {
+  assertFiniteInteger(maxResults, "max_results", { min: 1, max: MAX_SEARCH_RESULTS });
+
   const { org, project, authHeader } = getCredentials();
   const baseUrl = projectUrl(org, project);
 
@@ -805,6 +854,8 @@ export async function searchAzureWorkItems(
 }
 
 export async function addAzureComment(workItemId: number, text: string): Promise<void> {
+  assertFiniteInteger(workItemId, "work_item_id", { min: 1, max: 10_000_000 });
+
   const { org, project, authHeader } = getCredentials();
   const baseUrl = projectUrl(org, project);
 

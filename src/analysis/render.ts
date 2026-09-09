@@ -3,6 +3,7 @@ import type { ContextPackage } from "./types.js";
 export function renderMarkdown(pkg: ContextPackage): string {
   const lines: string[] = [];
   lines.push("# Análisis del ticket");
+  lines.push("Evidencia determinística del ticket únicamente; las inferencias no verificadas en el repositorio están etiquetadas y esto no es un plan final de implementación.");
   lines.push("");
   lines.push(`Tipo: ${pkg.ticketType.type} (conf. ${pkg.ticketType.confidence}) | Complejidad: ${pkg.complexity.level} | Riesgo general: ${pkg.overallRisk} | Calidad: ${pkg.qualityScore.score}/100`);
   lines.push("");

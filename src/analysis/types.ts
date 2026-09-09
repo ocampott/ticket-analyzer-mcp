@@ -37,6 +37,7 @@ export interface NormalizedTicket {
       done: boolean;
       description: string;
       acceptanceCriteria: string;
+      reproSteps?: string;
       comments: { author: string; date: string; text: string }[];
       attachments: { name: string; mimeType: string }[];
     }[];

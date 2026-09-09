@@ -1,22 +1,20 @@
 # Install with OpenAI Codex
 
-## One-command setup
+## Requirements
 
-After publishing 2.1.0, from the target project, run:
+Use Node.js 18 or newer. The setup wizard requires a TTY and writes credentials only to the target project's ignored `.env`.
+
+## Published package
+
+From the project that should own the credentials, run:
 
 ```bash
 npx -y ticket-analyzer-mcp@latest setup
 ```
 
-For local development before 2.1.0 is published, run setup from the checkout instead:
+Select Codex alone or with Claude Code and/or Pi. Choose the required providers, enter their credentials, then follow the generated Codex command. Setup prints only the absolute `.env` path, never provider secrets, and does not execute client CLIs or change client settings.
 
-```bash
-node /absolute/path/to/ticket-analyzer-mcp/bin/pm-mcp.js setup
-```
-
-Select Codex alone or with Claude Code and/or Pi, then use the local Node command printed by the wizard. After publishing, use the npm command below.
-
-Use the TTY checkbox multi-select to choose Trello cards, Jira issues, and/or Azure DevOps work items, then select any client combination. Leave all clients unchecked to configure later. Selecting no providers leaves ticket integrations unavailable until the required values are added to `.env` or setup is rerun. Setup prints one grouped, non-secret next step for every selected client and does not execute client CLIs or change client settings. Before each provider prompt it explains the credential source and format: Trello uses the API key and token from `https://trello.com/app-key`, Jira uses the site hostname, account email, and Atlassian API token, and Azure DevOps uses the organization, project, and a PAT with minimum `Work Items: Read` scope. `Work Items: Read & Write` is needed only for comments. The Codex next step uses only the absolute project `.env` path:
+The registration shape is:
 
 ```bash
 codex mcp add ticket-analyzer \
@@ -24,13 +22,23 @@ codex mcp add ticket-analyzer \
   -- npx -y ticket-analyzer-mcp@latest
 ```
 
-Do not put provider secrets in `codex mcp add`, shell history, or Codex configuration. The wizard never prints, echoes, logs, or includes credential values in commands. Restart Codex after changing the MCP configuration. If no client is selected, setup reports that credentials are ready locally but no agent client has been configured yet.
+This uses only the non-secret `TICKET_ANALYZER_ENV_FILE` setting. `codex mcp remove ticket-analyzer` removes the registration when needed. Restart Codex after changing the registration or after updating the package.
 
-## Advanced environment behavior
+`@latest` resolves the current npm package when a new MCP process starts. Keep this registration for normal updates; do not invent a Codex configuration-update command or rerun setup just to change the package version. Pin an explicit npm version only when reproducibility is intentional.
 
-The no-argument command starts the MCP server over stdio. It loads `TICKET_ANALYZER_ENV_FILE` when set, otherwise `<cwd>/.env`; real environment variables take precedence over file values. `status` performs only local checks, while `doctor` also checks provider connections.
+## Local checkout
 
-Merge [`integrations/codex/AGENTS.template.md`](../integrations/codex/AGENTS.template.md) into the target project's existing `AGENTS.md`. Do not overwrite local instructions.
+For local development, build the checkout before setup:
+
+```bash
+cd /absolute/path/to/ticket-analyzer-mcp
+npm install
+npm run build
+cd /absolute/path/to/your-project
+node /absolute/path/to/ticket-analyzer-mcp/bin/pm-mcp.js setup
+```
+
+When setup runs from a checkout, it detects the local package root and prints a local Codex command using `node /absolute/path/to/ticket-analyzer-mcp/bin/pm-mcp.js`. Rebuild after source changes and restart Codex. A package under `node_modules` is detected as published-package mode and prints the pinned `2.2.0` npm guidance instead.
 
 ## Provider fields
 
@@ -38,4 +46,17 @@ Merge [`integrations/codex/AGENTS.template.md`](../integrations/codex/AGENTS.tem
 - Jira: `JIRA_HOST`, `JIRA_EMAIL`, `JIRA_API_TOKEN`
 - Azure DevOps: `AZURE_DEVOPS_ORG`, `AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_PAT`
 
-Use [`.env.example`](../.env.example) for placeholder names only. Keep the generated `.env` project-local and ignored.
+Before each provider prompt, setup explains the credential source and format. Azure DevOps needs `Work Items: Read`; `Work Items: Read & Write` is needed only for comments. Do not put provider secrets in `codex mcp add`, shell history, or Codex configuration.
+
+## Merge the instructions
+
+Merge [`integrations/codex/AGENTS.template.md`](../integrations/codex/AGENTS.template.md) into the target project's existing `AGENTS.md`; preserve local instructions and headings. Do not overwrite local guidance.
+
+## Diagnostics
+
+The no-argument command starts the MCP server over stdio. `status` performs local-only checks; `doctor` also checks provider connections:
+
+```bash
+npx -y ticket-analyzer-mcp@latest status
+npx -y ticket-analyzer-mcp@latest doctor
+```

@@ -2,74 +2,68 @@
 
 A client-neutral MCP server for reading, searching, and analyzing tickets from **Trello, Jira, and Azure DevOps**. It works with Claude Code, OpenAI Codex, Pi, and other MCP-compatible clients.
 
+## Requirements
+
+- Node.js 18 or newer
+- The client CLI you plan to configure: Claude Code, Codex, or Pi
+- Provider credentials for the integrations you select (the setup wizard creates or updates the project-local `.env`)
+
 ## One-command setup
 
-After publishing 2.1.0, from the project that should own the credentials, run:
+From the project that should own the credentials, run the interactive setup wizard in a TTY:
 
 ```bash
 npx -y ticket-analyzer-mcp@latest setup
 ```
 
-For local development before 2.1.0 is published, run setup from the checkout instead:
+Choose the providers and clients to configure. Setup writes selected credentials to the ignored project-local `.env`, preserves unrelated keys, and prints grouped, non-secret next steps. It does not execute client CLIs, change client configuration, or print secret values. Leave all clients unchecked to configure them later.
+
+For a local checkout, install the build prerequisites and build before running setup:
 
 ```bash
+cd /absolute/path/to/ticket-analyzer-mcp
+npm install
+npm run build
+cd /absolute/path/to/your-project
 node /absolute/path/to/ticket-analyzer-mcp/bin/pm-mcp.js setup
 ```
 
-The wizard prints a local package path for Pi, a local Node command for Codex, or the Claude Code plugin commands. Use the exact local path it prints; if Pi already lists that path, reload Pi instead. After publishing, use the npm commands below.
+The local wizard detects that it is running from a checkout and prints a local Pi package path and a local Node command for Codex. Use the exact path it prints; if Pi already lists that path, reload Pi. A package installed under `node_modules` is treated as a published package and prints the reproducible `2.2.0` npm examples instead.
 
-The interactive setup uses TTY checkbox multi-selects for Trello, Jira, and Azure DevOps and for Claude Code, OpenAI Codex, and Pi. Select any client combination, or leave all clients unchecked to configure later. It validates required values, preserves unrelated `.env` keys, and writes the project-local `.env` with restrictive permissions where supported. It never changes Claude Code, Codex, or Pi configuration, executes client CLIs, or prints secret values. It prints one clearly grouped, non-secret next step for every selected client. Selecting no providers leaves ticket integrations unavailable until the required values are added to `.env` or setup is rerun.
+## CLI commands
 
-The command must run from a TTY. For diagnostics, use `doctor`; for a local, no-network configuration check, use `status`.
-
-```bash
-npx -y ticket-analyzer-mcp@latest doctor
-npx -y ticket-analyzer-mcp@latest status
-```
-
-The no-argument command is different: it starts the MCP server over stdio for an MCP client.
+The CLI has no `update` subcommand. The no-argument command starts the MCP server over stdio; `setup` is the only interactive command.
 
 ```bash
-npx -y ticket-analyzer-mcp@latest
+npx -y ticket-analyzer-mcp@latest doctor  # provider connectivity diagnostics
+npx -y ticket-analyzer-mcp@latest status  # local-only configuration check
+npx -y ticket-analyzer-mcp@latest         # MCP server over stdio
 ```
 
-## What it provides
-
-- Fetch complete Trello cards, Jira issues, and Azure DevOps work-item trees.
-- Search Trello, Jira, and Azure DevOps.
-- Include descriptions, comments, acceptance criteria, attachments, and Azure child work items.
-- Return deterministic, structured `analyze_ticket` evidence.
-- Post comments only through explicitly requested write-capable tools.
-
-Read tools include `get_trello_card`, `list_trello_cards`, `search_jira_issues`, `get_jira_issue`, `get_azure_work_item`, `search_azure_work_items`, `get_status`, and `analyze_ticket`.
-
-## Credentials and `.env`
-
-Credentials are loaded from `TICKET_ANALYZER_ENV_FILE` when set; otherwise from `<cwd>/.env`. Real environment variables always take precedence over file values and are never overwritten. During setup, each provider is labeled by purpose and the wizard explains the exact source and format before prompting. Trello uses the API key and token from `https://trello.com/app-key`; Jira uses the site hostname, account email, and API token from Atlassian account security; Azure DevOps uses the organization, project, and a PAT with minimum `Work Items: Read` scope (`Work Items: Read & Write` is needed only for comments). Only the following provider variables are needed:
-
-| Provider | Variables |
-|---|---|
-| Trello | `TRELLO_API_KEY`, `TRELLO_TOKEN` |
-| Jira | `JIRA_HOST`, `JIRA_EMAIL`, `JIRA_API_TOKEN` |
-| Azure DevOps | `AZURE_DEVOPS_ORG`, `AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_PAT` |
-
-`.env` is project-local and ignored by Git. Use [`.env.example`](.env.example) for placeholder names only. Credentials are not stored in Pi, Claude Code, or Codex configuration. Never commit credentials or paste them into a session transcript.
+`status` never calls a provider. `doctor` may contact providers and reports connection errors without secrets. Setup, doctor, and status load `TICKET_ANALYZER_ENV_FILE` when set, otherwise `<cwd>/.env`; real environment variables take precedence.
 
 ## Claude Code
 
-Install or update the plugin, restart Claude Code, and run the secure setup CLI from the target project:
+Install the plugin from the GitHub marketplace, run setup, and restart Claude Code:
 
 ```bash
-claude plugin marketplace add ticket-analyzer-mcp --source github --repo ocampott/ticket-analyzer-mcp
+claude plugin marketplace add ocampott/ticket-analyzer-mcp
 claude plugin install ticket-analyzer@ticket-analyzer-mcp
 npx -y ticket-analyzer-mcp@latest setup
 ```
 
-For an existing installation, use `claude plugin marketplace update ticket-analyzer-mcp` and `claude plugin update ticket-analyzer@ticket-analyzer-mcp`, then restart Claude Code. The compatibility `/ticket-analyzer:setup` skill directs users to the secure CLI and does not pass secrets to `claude mcp add`.
+For an existing installation, update the marketplace and plugin, then restart Claude Code:
+
+```bash
+claude plugin marketplace update ticket-analyzer-mcp
+claude plugin update ticket-analyzer@ticket-analyzer-mcp
+```
+
+The setup skill directs users to the secure CLI and never passes provider secrets to Claude configuration.
 
 ## OpenAI Codex
 
-Run the setup CLI and select Codex (alone or with other clients). The resulting registration uses only the non-secret absolute env-file path:
+Run setup and select Codex. Register only the non-secret absolute env-file path:
 
 ```bash
 codex mcp add ticket-analyzer \
@@ -77,17 +71,67 @@ codex mcp add ticket-analyzer \
   -- npx -y ticket-analyzer-mcp@latest
 ```
 
-Restart Codex after changing the MCP configuration. Full details: [`docs/codex-install.md`](docs/codex-install.md).
+The command shape is `codex mcp add <NAME> --env KEY=VALUE -- COMMAND...`; `codex mcp remove <NAME>` removes an existing registration. Do not put provider secrets in Codex configuration or shell history.
+
+The `@latest` command resolves the current npm package when a new MCP process starts. After changing registration or updating the package, restart Codex. There is no documented Codex configuration-update command in this package, so do not rerun setup merely to change a package version when the registration already uses `@latest`.
+
+Full details: [`docs/codex-install.md`](docs/codex-install.md).
 
 ## Pi
 
-Run the setup CLI and select Pi (alone or with other clients), or install directly:
+Run setup and select Pi, or install the project-local package directly:
 
 ```bash
 pi install -l npm:ticket-analyzer-mcp
 ```
 
-The Pi extension starts the bundled no-argument stdio server with the project working directory. It forwards only the ticket credential allowlist and `TICKET_ANALYZER_ENV_FILE`; it does not forward the host environment wholesale. Full details: [`docs/pi-install.md`](docs/pi-install.md).
+A user-global install is also supported:
+
+```bash
+pi install npm:ticket-analyzer-mcp
+```
+
+Update this MCP package explicitly:
+
+```bash
+pi update npm:ticket-analyzer-mcp
+```
+
+`pi update` by itself updates Pi, not this MCP package. The default unpinned npm spec allows package updates to move to the latest release. A reproducible pinned install uses `npm:ticket-analyzer-mcp@2.2.0`, but pinned specs are skipped by package updates; move the pin with an explicit install of the new version:
+
+```bash
+pi install -l npm:ticket-analyzer-mcp@NEW_VERSION
+```
+
+Replace `NEW_VERSION` with the release you want to use.
+
+For a local checkout, build first and register its absolute package path:
+
+```bash
+cd /absolute/path/to/ticket-analyzer-mcp
+npm install
+npm run build
+cd /absolute/path/to/your-project
+pi install -l /absolute/path/to/ticket-analyzer-mcp
+```
+
+A local path must be rebuilt after source changes and then reloaded in Pi; `pi update npm:ticket-analyzer-mcp` does not update a local checkout. Pi extensions run with full system access, so review the package source before enabling it.
+
+The extension starts the bundled no-argument stdio server with the project working directory and forwards only the ticket credential allowlist plus `TICKET_ANALYZER_ENV_FILE`.
+
+Full details: [`docs/pi-install.md`](docs/pi-install.md).
+
+## Credentials and `.env`
+
+Only these provider variables are required:
+
+| Provider | Variables |
+|---|---|
+| Trello | `TRELLO_API_KEY`, `TRELLO_TOKEN` |
+| Jira | `JIRA_HOST`, `JIRA_EMAIL`, `JIRA_API_TOKEN` |
+| Azure DevOps | `AZURE_DEVOPS_ORG`, `AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_PAT` |
+
+Use [`.env.example`](.env.example) for placeholder names only. Credentials are never stored in Pi, Claude Code, or Codex configuration. Never commit credentials or paste them into a session transcript.
 
 ## Safe workflow
 
@@ -98,10 +142,7 @@ The Pi extension starts the bundled no-argument stdio server with the project wo
 
 A request to analyze or plan never authorizes code changes or ticket comments.
 
-## Requirements and development
-
-- Node.js 18+
-- Claude Code, OpenAI Codex, Pi, or another MCP-compatible client
+## Development
 
 ```bash
 npm install

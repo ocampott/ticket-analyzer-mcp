@@ -60,7 +60,7 @@ describe("ticket-analyzer CLI", () => {
     const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
     expect(text).toContain(`Next step for Pi: pi install -l ${packageRoot}`);
     expect(text).toMatch(/If Pi already lists this path, reload Pi instead/i);
-    expect(text).not.toContain("npm:ticket-analyzer-mcp@2.1.0");
+    expect(text).not.toContain("npm:ticket-analyzer-mcp@2.2.0");
     expect((await stat(path.join(cwd, ".env"))).mode & 0o777).toBe(0o600);
   });
 
@@ -153,7 +153,7 @@ describe("ticket-analyzer CLI", () => {
 
     const text = output.join(" ");
     expect(text).toContain(`-- node ${path.join(packageRoot, "bin", "pm-mcp.js")}`);
-    expect(text).not.toContain("npx -y ticket-analyzer-mcp@2.1.0");
+    expect(text).not.toContain("npx -y ticket-analyzer-mcp@2.2.0");
   });
 
   test("setup keeps npm guidance for a package installed under node_modules", async () => {
@@ -175,7 +175,7 @@ describe("ticket-analyzer CLI", () => {
     });
 
     const text = output.join(" ");
-    expect(text).toContain("-- npx -y ticket-analyzer-mcp@2.1.0");
+    expect(text).toContain("-- npx -y ticket-analyzer-mcp@2.2.0");
     expect(text).not.toContain(path.join(packageRoot, "bin", "pm-mcp.js"));
   });
 
@@ -198,7 +198,7 @@ describe("ticket-analyzer CLI", () => {
     });
 
     const text = output.join(" ");
-    expect(text).toContain("Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.1.0");
+    expect(text).toContain("Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.2.0");
     expect(text).not.toContain(packageRoot);
   });
 

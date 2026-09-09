@@ -1,6 +1,19 @@
 # Changelog
 
-## [2.1.0] - Unreleased
+## [2.2.0] - 2026-09-09
+
+### Added
+
+- Added safe, bounded attachment handling with validation, pagination, and hierarchy evidence across provider responses.
+- Added complete necessary-scope guidance and consented repository-pattern caching rules to the shipped analysis workflow.
+
+### Changed
+
+- Corrected Claude Code marketplace installation guidance to use `claude plugin marketplace add ocampott/ticket-analyzer-mcp` and the supported plugin install/update commands.
+- Aligned npm, MCP server, Pi extension, Claude plugin, and marketplace metadata at `2.2.0`.
+- Clarified latest-versus-pinned update behavior and local-checkout rebuild/reload steps for Claude Code, Codex, and Pi.
+
+## [2.1.0] - 2026-09-09
 
 ### Added
 

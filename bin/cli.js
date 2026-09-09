@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { checkbox, input as inquirerInput, password } from "@inquirer/prompts";
 import dotenv from "dotenv";
 
-const VERSION = "2.1.0";
+const VERSION = "2.2.0";
 const ENV_FILE_VARIABLE = "TICKET_ANALYZER_ENV_FILE";
 const PROVIDERS = {
   trello: ["TRELLO_API_KEY", "TRELLO_TOKEN"],
@@ -242,19 +242,19 @@ export async function setupCommand(options = {}) {
         writeOutput(stdout, `${CLIENT_LABELS[client]}:`);
         if (client === "pi") {
           if (isPublishedPackageRoot(packageRoot)) {
-            writeOutput(stdout, "Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.1.0");
+            writeOutput(stdout, "Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.2.0");
           } else {
             writeOutput(stdout, `Next step for Pi: pi install -l ${commandArgument(packageRoot)}`);
             writeOutput(stdout, "If Pi already lists this path, reload Pi instead.");
           }
         } else if (client === "codex") {
           const serverCommand = isPublishedPackageRoot(packageRoot)
-            ? "npx -y ticket-analyzer-mcp@2.1.0"
+            ? "npx -y ticket-analyzer-mcp@2.2.0"
             : `node ${commandArgument(path.join(packageRoot, "bin", "pm-mcp.js"))}`;
           writeOutput(stdout, `Next step for Codex: codex mcp add ticket-analyzer --env ${ENV_FILE_VARIABLE}=${shellQuote(filePath)} -- ${serverCommand}`);
         } else {
           writeOutput(stdout, "Next step for Claude Code: install or update ticket-analyzer@ticket-analyzer-mcp from the ticket-analyzer-mcp marketplace, then restart Claude Code.");
-          writeOutput(stdout, "Install: claude plugin marketplace add ticket-analyzer-mcp --source github --repo ocampott/ticket-analyzer-mcp && claude plugin install ticket-analyzer@ticket-analyzer-mcp");
+          writeOutput(stdout, "Install: claude plugin marketplace add ocampott/ticket-analyzer-mcp && claude plugin install ticket-analyzer@ticket-analyzer-mcp");
           writeOutput(stdout, "Update: claude plugin marketplace update ticket-analyzer-mcp && claude plugin update ticket-analyzer@ticket-analyzer-mcp");
         }
       }
@@ -314,7 +314,7 @@ export async function doctorCommand(options = {}) {
 
 function helpText() {
   return [
-    "ticket-analyzer-mcp 2.1.0",
+    "ticket-analyzer-mcp 2.2.0",
     "",
     "Usage:",
     "  npx -y ticket-analyzer-mcp              Start the MCP server over stdio",

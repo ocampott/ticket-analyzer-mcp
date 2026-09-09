@@ -18,10 +18,12 @@ Do not pass provider secrets to `claude mcp add`, `claude plugin`, shell command
 
 After provider setup, select any combination of Claude Code, OpenAI Codex, and Pi with the checkbox selector. Leave all clients unchecked to configure later. Follow every grouped, client-specific next step it prints:
 
-- Pi: `pi install -l npm:ticket-analyzer-mcp`
-- Codex: register the server with only `TICKET_ANALYZER_ENV_FILE=<absolute project .env>` as the environment setting, then restart Codex.
-- Claude Code: install or update the `ticket-analyzer@ticket-analyzer-mcp` plugin, then restart Claude Code.
+- Claude Code: `claude plugin marketplace add ocampott/ticket-analyzer-mcp`, then `claude plugin install ticket-analyzer@ticket-analyzer-mcp`; update with `claude plugin marketplace update ticket-analyzer-mcp` and `claude plugin update ticket-analyzer@ticket-analyzer-mcp`, then restart Claude Code.
+- Pi: project-local `pi install -l npm:ticket-analyzer-mcp` or user-global `pi install npm:ticket-analyzer-mcp`; update with `pi update npm:ticket-analyzer-mcp`. Pi packages run with full system access, so review the package source.
+- Codex: register only the non-secret absolute env-file path with `codex mcp add ticket-analyzer --env TICKET_ANALYZER_ENV_FILE=/absolute/path/to/project/.env -- npx -y ticket-analyzer-mcp@latest`, then restart Codex.
 - No client: setup explicitly reports that credentials are ready locally but no agent client has been configured yet.
+
+For a local checkout, build it with `npm install` and `npm run build` before running `node /absolute/path/to/ticket-analyzer-mcp/bin/pm-mcp.js setup`. The wizard detects local versus `node_modules` package roots and prints local paths or reproducible published-package guidance accordingly. The CLI has no `update` subcommand.
 
 For diagnostics:
 

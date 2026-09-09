@@ -45,7 +45,7 @@ Combine fragments with `AND`. Example: `"tickets del sprint actual en doing sobr
 
 **4. Ask:** "¿Querés analizar alguno? Escribí el número o el key."
 
-**5. When the user replies**, run the full analysis workflow from CLAUDE.md (Pasos 1–9) with that issue key, as if the user had called `/ticket-analyzer:analize [key]`.
+**5. When the user replies**, run the current ticket-analysis workflow from the canonical package guidance with that issue key, as if the user had called `/ticket-analyzer:analize [key]`.
 
 ---
 
@@ -69,7 +69,7 @@ Combine fragments with `AND`. Example: `"tickets del sprint actual en doing sobr
 
 **4. Ask:** "¿Querés analizar alguna? Escribí el número."
 
-**5. When the user replies**, run the full analysis workflow from CLAUDE.md (Pasos 1–9) with that card ID.
+**5. When the user replies**, run the current ticket-analysis workflow from the canonical package guidance with that card ID.
 
 ---
 
@@ -105,4 +105,4 @@ Combine with `AND`. Example: `"user stories activas sobre pagos"` → `[System.W
 
 **4. Ask:** "¿Querés analizar alguno? Escribí el número o el ID."
 
-**5. When the user replies**, run the full analysis workflow from CLAUDE.md (Pasos 1–9) with that work item ID.
+**5. When the user replies**, run the current ticket-analysis workflow from the canonical package guidance with that work item ID.

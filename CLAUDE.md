@@ -4,7 +4,7 @@
 
 `ticket-analyzer-mcp` es un servidor MCP que expone los tools `get_trello_card`, `get_jira_issue` y `get_azure_work_item` para traer el contenido de tarjetas, issues y work items directamente en Claude Code.
 
-Para que Claude analice los resultados automáticamente con Opus, copiá la sección de abajo a tu `~/.claude/CLAUDE.md` (configuración global) o al `CLAUDE.md` de tu proyecto. Esta sección es la fuente de verdad — si la actualizás acá, actualizala también en el global.
+Para que Claude analice los resultados con el modelo configurado, copiá la sección de abajo a tu `~/.claude/CLAUDE.md` (configuración global) o al `CLAUDE.md` de tu proyecto. Esta sección es la fuente de verdad — si la actualizás acá, actualizala también en el global.
 
 ---
 
@@ -26,19 +26,21 @@ Volvé a pedirlo **solo** si un adjunto define la implementación: un wireframe 
 
 **Azure**: devuelve el árbol completo — cada Task, Bug e hijo con su propia descripción, criterios de aceptación, pasos para reproducir y comentarios. Leé los hijos antes de explorar el codebase: el requerimiento real suele estar en un hijo, no en la Story raíz. Si dice `_Árbol truncado_`, subí `max_depth` (default 3) o `max_nodes` (default 40) — nunca analices un árbol truncado como si estuviera completo.
 
+Traé y leé toda la evidencia del ticket que pueda cambiar el trabajo: descripción, criterios, comentarios, checklists, hijos, decisiones de refinamiento, inventario y contenido de adjuntos relevantes. `analyze_ticket` aporta evidencia determinística del ticket únicamente; sus hipótesis no son requisitos, bloqueantes ni estimaciones confirmadas y no constituyen el plan final.
+
 ### Paso 2 — Contexto del proyecto
 
-Leé `.claude/project-context.md` (ignoralo si tiene más de 30 días) y `.claude/patterns.md` (no vence).
+Leé `.claude/project-context.md` y `.claude/patterns.md` cuando existan, sin confiar en su antigüedad. Son hints de navegación, no evidencia: releé el código exacto referenciado cada vez, aunque el SHA o la fecha parezcan frescos, y marcá si el repo está dirty o el estado es desconocido. Cada patrón reutilizable debe registrar nombre, paths y símbolos exactos relativos al repo, fecha y revisión realmente verificados, marcador dirty/unknown, aplicabilidad y límites. No inventes revisiones ni símbolos.
 
-Cruzá los patrones documentados con el ticket antes de explorar. Si un patrón ya cubre lo que el ticket pide, reusá la referencia en vez de releer esos archivos.
+Cruzá los patrones con el ticket antes de explorar, pero revalidá siempre su fuente. Actualizá o deduplicá registros obsoletos en vez de anexarlos ciegamente. El análisis es read-only: un CACHE WRITE requiere consentimiento explícito y acotado (cache-only consent) solo para `.claude/project-context.md` y/o `.claude/patterns.md`; no habilita cambios de aplicación, migraciones, comentarios ni `.gitignore`; el permiso de análisis y el consentimiento de cache-write son distintos. Verificá que el repo consumidor ignore esos paths; si no, frená y reportá la decisión.
 
 ### Paso 3 — Decidí si delegás
 
 | Situación | Cómo |
 |---|---|
 | Hay cache + ticket simple | **Inline, sin agente.** Spawnear cuesta más de lo que ahorra. |
-| Hay cache + ticket complejo | Agente con **Opus** |
-| No hay cache | Agente con **Opus** (exploración completa) |
+| Hay cache + ticket complejo | Agente con el modelo configurado |
+| No hay cache | Agente con el modelo configurado (exploración completa) |
 
 Un ticket es complejo si cumple alguno: más de 10 archivos afectados, cambios de schema, múltiples servicios, integraciones externas, auth o permisos, conflicto con la arquitectura, requerimientos ambiguos, o riesgo alto en producción.
 
@@ -51,7 +53,7 @@ El entregable depende de la plataforma, porque el lector también:
 - **Azure DevOps** → una estimación para acordar, que se pega en la task de análisis. Dos partes.
 - **Trello / Jira** → un plan de implementación, a punto de pasarse a un agente. Sin horas.
 
-En los dos casos la salida es corta. Las dos son un resumen, no una explicación — el razonamiento va en la sección privada del final, nunca en el bloque copiable.
+En los dos casos la salida debe ser concisa pero completa: el razonamiento va en la sección privada del final, nunca en el bloque copiable. El cambio objetivo es el completo necesario según la evidencia, no una reducción artificial de archivos o diff.
 
 Registro: castellano rioplatense natural y profesional. Impersonal o en primera del plural, nunca tuteando ni voseando al lector.
 
@@ -130,6 +132,8 @@ Cómo se comprueba que quedó bien.
 
 **Reglas**
 
+- Antes de cerrar, mapeá cada comportamiento y restricción pedido contra evidencia del ticket/refinamiento, código exacto, estado actual y delta necesario; distinguí `ya existe`, `delta necesario`, plan completo y verificación proporcional.
+- Incluí Backend, Infra u otros repos cuando el ticket o el código inspeccionado prueben que hacen falta; si no podés verificarlo, marcá la inferencia como `repository-unverified` y no la conviertas en requisito o bloqueo.
 - Los pasos van en orden de dependencia, numerados. **Cada paso nombra una ruta exacta** — si no podés, no exploraste lo suficiente en el Paso 2.
 - Reusar antes que inventar: si el repo ya resuelve algo equivalente, nombrá ese archivo en el paso. Un agente librado a inventar, inventa.
 - `No toques` lleva lo que el análisis descubrió y el agente no puede ver: radio de explosión, un permiso compartido, un orden que importa, un atajo tentador que rompe otra cosa. Es el bloque de más valor del plan. Omitilo solo si de verdad no hay nada.
@@ -159,20 +163,6 @@ Las Dudas con opciones discretas van por `AskUserQuestion` (máx 4 por pregunta)
 
 Cerrá con una línea ofreciendo publicar el bloque copiable como comentario —`add_azure_comment`, `add_trello_comment` o `add_jira_comment`— y arrancar la implementación. Nunca publiques la sección privada. No publiques nada sin que te lo pidan, y si las credenciales son de solo lectura avisalo al ofrecer, no después de que falle la llamada.
 
-### Paso 5 — Guardá el cache (solo si exploraste desde cero)
+### Paso 5 — Cache (solo con consentimiento acotado)
 
-**`.claude/project-context.md`**
-```
-<!-- Generado: YYYY-MM-DD -->
-[Stack, estructura de carpetas, convenciones clave, patrones importantes. Máx 200 palabras.]
-```
-
-**`.claude/patterns.md`** (solo si encontraste patrones reusables)
-```
-<!-- Generado: YYYY-MM-DD | Última actualización: YYYY-MM-DD -->
-[Patrones concretos reusables]
-```
-
-Si el cache ya existía y encontraste un patrón **nuevo**, agregalo al final y actualizá la fecha. Guardá un patrón solo si aparece en 2+ archivos, es un flujo complejo completo (auth, upload, paginación), o fue la referencia principal para este ticket.
-
-Ambos archivos están en `.gitignore` — son locales de cada dev.
+El análisis no escribe archivos del repo consumidor. Solo un consentimiento explícito para CACHE WRITE puede autorizar `.claude/project-context.md` y/o `.claude/patterns.md`, nunca cambios de aplicación, migraciones, comentarios o `.gitignore`. Antes de escribir, comprobá que esos paths estén ignorados; si no, no escribas y reportá la decisión. Persistí únicamente conocimiento verificado, sin secretos, contenido privado del ticket ni identificadores sensibles; actualizá y deduplicá registros con revisión, fecha, estado dirty/unknown, aplicabilidad y límites. Cache only verified, reusable repository patterns with exact repository-relative source paths and symbols, actual revision/date, dirty or unknown status, applicability, and limits; never persist raw ticket descriptions, comments, or attachments, credentials or secrets, sensitive ticket or person identifiers, or private external context; never fabricate source references or revisions, and never promote guesses to facts.

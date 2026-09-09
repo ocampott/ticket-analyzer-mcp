@@ -47,6 +47,7 @@ export function normalizeAzure(workItem: AzureWorkItemResult): NormalizedTicket 
     done: isDone(child.state),
     description: child.description,
     acceptanceCriteria: child.acceptanceCriteria,
+    reproSteps: child.reproSteps,
     comments: child.comments.map((c) => ({ author: c.author, date: c.date, text: c.text })),
     attachments: child.attachments.map((a) => ({ name: a.name, mimeType: a.mimeType })),
   }));

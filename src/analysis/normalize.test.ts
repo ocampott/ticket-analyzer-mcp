@@ -1,4 +1,6 @@
-import { normalizeJira, normalizeTrello } from "./normalize.js";
+import { normalizeAzure, normalizeJira, normalizeTrello } from "./normalize.js";
+import { analyzeTicket } from "./index.js";
+import type { AzureWorkItemResult } from "../azure.js";
 import type { JiraIssueResult } from "../jira.js";
 import type { TrelloCardResult } from "../trello.js";
 
@@ -38,4 +40,29 @@ test("normalizeTrello flattens checklists and sets source", () => {
   expect(ticket.type).toBeNull();
   expect(ticket.checklistItems).toEqual([{ text: "probar", done: false }]);
   expect(ticket.labels).toEqual(["red: Blocker"]);
+});
+
+test("normalizeAzure preserves child repro steps as analysis evidence", () => {
+  const workItem: AzureWorkItemResult = {
+    id: 1596, title: "Parent", workItemType: "User Story", state: "Active", reason: null,
+    priority: null, assignee: null, createdBy: null, storyPoints: null, remainingWork: null,
+    tags: [], iterationPath: null, areaPath: null, description: "", acceptanceCriteria: "",
+    reproSteps: "", comments: [], attachments: [], url: "https://example.test/1596",
+    children: [{
+      id: 1660, title: "Child bug", workItemType: "Bug", state: "Active", reason: null,
+      priority: null, assignee: null, createdBy: null, storyPoints: null, remainingWork: null,
+      tags: [], iterationPath: null, areaPath: null, description: "", acceptanceCriteria: "",
+      reproSteps: "Al abrir el perfil, la aplicación crashea.", comments: [], attachments: [],
+      children: [], url: "https://example.test/1660",
+    }],
+    parent: null, related: [], truncated: false, nodeCount: 2,
+  };
+
+  const ticket = normalizeAzure(workItem);
+  expect(ticket.metadata.children?.[0]).toMatchObject({
+    reproSteps: "Al abrir el perfil, la aplicación crashea.",
+  });
+  const analysis = analyzeTicket(ticket);
+  expect(analysis.ticketType.type).toBe("bug");
+  expect(analysis.ticketType.evidence).toContain("crash");
 });

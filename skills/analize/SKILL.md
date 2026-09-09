@@ -21,7 +21,7 @@ If only one integration is configured, prefer it over the format guess. Call `ge
 
 **Fetch with `include_images: false` and `include_text_attachments: false`, and do not ask first.** The response lists every attachment by name, which is what tells you whether any of them are worth the tokens. Most tickets never need a second fetch.
 
-Fetch again **only** when a specific attachment decides the implementation: a wireframe on a UI ticket, a `.sql` on a data ticket, a `.csv`/`.json` when the ticket is about parsing that exact shape, or a screenshot on a bug whose description does not explain the failure. Otherwise move on. If you are unsure whether one matters, name it in the same message as the analysis instead of stopping.
+Fetch again **only** when a specific attachment decides the implementation: a wireframe on a UI ticket, a `.sql` on a data ticket, a `.csv`/`.json` when the ticket is about parsing that exact shape, or a screenshot on a bug whose description does not explain the failure. Otherwise move on. If you are unsure whether one matters, name it in the same message as the analysis instead of stopping. Read all comments, children, checklists, refinement decisions, and relevant attachment contents before concluding.
 
 **Azure only**: the response is the whole ticket tree — every Task, Bug and child Story with its own description, acceptance criteria, repro steps and comments. Read the children before exploring the codebase; the real requirement is usually written in a child, not in the root Story. If the output says `_Árbol truncado_`, raise `max_depth` (default 3) or `max_nodes` (default 40) — never analyze a truncated tree as if it were complete.
 
@@ -29,16 +29,18 @@ Fetch again **only** when a specific attachment decides the implementation: a wi
 
 ## Step 2 — Explore the codebase
 
-Read `.claude/project-context.md` (ignore it if older than 30 days) and `.claude/patterns.md` (no expiry).
+Read `.claude/project-context.md` and `.claude/patterns.md` when present, regardless of age. They are navigation hints only, not proof: re-read exact referenced source on every reuse, record actual revision plus dirty/unknown status, and never trust a fresh date or SHA alone.
 
-- **With cache**: go straight to the files the ticket most likely touches. Still read them before answering.
+- **With cache**: use it to navigate, then read the exact files the ticket requires.
 - **Without cache**: explore with `find`, `ls`, `Read` — folder structure, stack, conventions, entry points.
 
-Cross-reference documented patterns first. If a pattern already covers what the ticket needs, reuse the reference instead of re-reading those files.
+Each reusable pattern record requires a name, exact repo-relative paths and symbols, verified date/revision, dirty/unknown marker, applicability, and limits. Update or deduplicate stale records; never fabricate them. Map every behavior and restriction to evidence, current implementation, necessary delta, complete plan, and proportional verification. Include Backend, Infra, or other repositories only when proven by the ticket or inspected code; otherwise label repository-unverified inferences.
 
 ---
 
 ## Step 3 — Answer
+
+The complete necessary change is the goal; the deliverable must not minimize file count or diff. `analyze_ticket` is deterministic ticket-only evidence; its hypotheses are not confirmed requirements, blockers, or estimates, and its output is not the final implementation plan.
 
 The deliverable depends on the platform, because the reader does:
 
@@ -161,22 +163,8 @@ Close with one line offering to post the copyable block as a comment — `add_az
 
 ---
 
-## Step 4 — Save the cache (only if you explored from scratch)
+## Step 4 — Save the cache (only with explicit bounded consent)
 
-If Step 2 required a full exploration, write both files after presenting the analysis:
+Analysis is read-only. Do not write consumer files unless the user explicitly grants bounded cache-only consent (CACHE WRITE) for only `.claude/project-context.md` and/or `.claude/patterns.md`, after verifying those paths are ignored. That consent does not authorize application changes, migrations, comments, or `.gitignore` edits; analyze permission and cache-write consent are distinct. Without it, do not write a cache.
 
-**`.claude/project-context.md`**
-```
-<!-- Generated: YYYY-MM-DD -->
-[Tech stack, folder structure, key conventions, important patterns. Max 200 words.]
-```
-
-**`.claude/patterns.md`** (only if you found reusable patterns)
-```
-<!-- Generated: YYYY-MM-DD | Last updated: YYYY-MM-DD -->
-[Concrete reusable patterns]
-```
-
-If the cache already existed and you found a **new** pattern, append it and bump `Last updated`. Save a pattern only if it appears in 2+ files, is a complete complex flow (auth, upload, pagination), or is the primary reference for this ticket.
-
-Both files are gitignored — local to each developer.
+With that consent, write only verified knowledge: no secrets, raw ticket content, private external context, or sensitive identifiers. Cache only verified, reusable repository patterns with exact repository-relative source paths and symbols, actual revision/date, dirty or unknown status, applicability, and limits; never persist raw ticket descriptions, comments, or attachments, credentials or secrets, sensitive ticket or person identifiers, or private external context; never fabricate source references or revisions, and never promote guesses to facts. Update and deduplicate stale records rather than appending blindly. Never assume a consuming repo ignores these cache paths.

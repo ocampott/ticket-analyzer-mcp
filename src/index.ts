@@ -11,7 +11,7 @@ import { getTrelloCard, TrelloCardResult, listTrelloCards, addTrelloComment, get
 import { getJiraIssue, JiraIssueResult, searchJiraIssues, addJiraComment, getJiraStatus } from "./jira.js";
 import { getAzureWorkItem, AzureWorkItemResult, AzureWorkItemNode, searchAzureWorkItems, addAzureComment, getAzureStatus, DEFAULT_MAX_DEPTH, DEFAULT_MAX_NODES } from "./azure.js";
 import { getJiraCustomFields } from "./fields.js";
-import { handleAnalyzeTicket } from "./analysis/tool.js";
+import { ANALYZE_TICKET_OUTPUT_SCHEMA, handleAnalyzeTicket } from "./analysis/tool.js";
 
 function formatDate(iso: string): string {
   return iso.slice(0, 10);
@@ -29,7 +29,17 @@ function langHintFromName(name: string): string {
   return map[ext] ?? "";
 }
 
-function formatCardAsMarkdown(card: TrelloCardResult, imageNames: string[], textAttachments: TextAttachment[]): string {
+function metadataOnlyAttachments<T extends { name: string; mimeType: string; url: string }>(
+  attachments: T[],
+  renderedImages: { name: string; url?: string }[],
+): T[] {
+  const renderedUrls = new Set(renderedImages.flatMap((image) => image.url ? [image.url] : []));
+  return attachments.filter(
+    (attachment) => !attachment.mimeType.startsWith("image/") || !renderedUrls.has(attachment.url),
+  );
+}
+
+function formatCardAsMarkdown(card: TrelloCardResult, renderedImages: { name: string; url?: string }[], textAttachments: TextAttachment[]): string {
   const lines: string[] = [];
 
   lines.push(`# ${card.name}`);
@@ -70,10 +80,11 @@ function formatCardAsMarkdown(card: TrelloCardResult, imageNames: string[], text
     }
   }
 
-  if (card.attachments.length > 0) {
+  const cardAttachments = metadataOnlyAttachments(card.attachments, renderedImages);
+  if (cardAttachments.length > 0) {
     lines.push("");
-    lines.push(`## Adjuntos (${card.attachments.length})`);
-    for (const att of card.attachments) {
+    lines.push(`## Adjuntos (${cardAttachments.length})`);
+    for (const att of cardAttachments) {
       lines.push(`- ${att.name} (${att.mimeType})`);
     }
   }
@@ -91,15 +102,10 @@ function formatCardAsMarkdown(card: TrelloCardResult, imageNames: string[], text
     }
   }
 
-  if (imageNames.length > 0) {
-    lines.push("");
-    lines.push(`_Imágenes (${imageNames.length}): ${imageNames.map((n, i) => `[${i + 1}] ${n}`).join(", ")}_`);
-  }
-
   return lines.join("\n");
 }
 
-function formatIssueAsMarkdown(issue: JiraIssueResult, imageNames: string[], textAttachments: TextAttachment[]): string {
+function formatIssueAsMarkdown(issue: JiraIssueResult, renderedImages: { name: string; url?: string }[], textAttachments: TextAttachment[]): string {
   const lines: string[] = [];
 
   lines.push(`# [${issue.key}] ${issue.summary}`);
@@ -141,10 +147,11 @@ function formatIssueAsMarkdown(issue: JiraIssueResult, imageNames: string[], tex
     }
   }
 
-  if (issue.attachments.length > 0) {
+  const issueAttachments = metadataOnlyAttachments(issue.attachments, renderedImages);
+  if (issueAttachments.length > 0) {
     lines.push("");
-    lines.push(`## Adjuntos (${issue.attachments.length})`);
-    for (const att of issue.attachments) {
+    lines.push(`## Adjuntos (${issueAttachments.length})`);
+    for (const att of issueAttachments) {
       lines.push(`- ${att.name} (${att.mimeType})`);
     }
   }
@@ -162,15 +169,10 @@ function formatIssueAsMarkdown(issue: JiraIssueResult, imageNames: string[], tex
     }
   }
 
-  if (imageNames.length > 0) {
-    lines.push("");
-    lines.push(`_Imágenes (${imageNames.length}): ${imageNames.map((n, i) => `[${i + 1}] ${n}`).join(", ")}_`);
-  }
-
   return lines.join("\n");
 }
 
-function formatNodeBody(node: AzureWorkItemNode, headingLevel: number): string[] {
+function formatNodeBody(node: AzureWorkItemNode, headingLevel: number, renderedImages: { name: string; url?: string }[]): string[] {
   const h = "#".repeat(headingLevel);
   const lines: string[] = [];
 
@@ -201,10 +203,11 @@ function formatNodeBody(node: AzureWorkItemNode, headingLevel: number): string[]
     }
   }
 
-  if (node.attachments.length > 0) {
+  const nodeAttachments = metadataOnlyAttachments(node.attachments, renderedImages);
+  if (nodeAttachments.length > 0) {
     lines.push("");
-    lines.push(`${h} Adjuntos (${node.attachments.length})`);
-    for (const att of node.attachments) {
+    lines.push(`${h} Adjuntos (${nodeAttachments.length})`);
+    for (const att of nodeAttachments) {
       lines.push(`- ${att.name} (${att.mimeType})`);
     }
   }
@@ -245,7 +248,7 @@ function formatIndexTree(node: AzureWorkItemNode, depth = 0): string[] {
 
 function formatWorkItemAsMarkdown(
   item: AzureWorkItemResult,
-  imageNames: string[],
+  renderedImages: { name: string; url?: string }[],
   textAttachments: TextAttachment[]
 ): string {
   const lines: string[] = [];
@@ -260,7 +263,7 @@ function formatWorkItemAsMarkdown(
   if (item.parent) lines.push(`Parent: [${item.parent.id}] ${item.parent.title} (${item.parent.type})`);
   lines.push(`URL: ${item.url}`);
 
-  lines.push(...formatNodeBody(item, 2));
+  lines.push(...formatNodeBody(item, 2, renderedImages));
 
   const descendants = flattenDescendants(item);
 
@@ -292,7 +295,7 @@ function formatWorkItemAsMarkdown(
     const meta = nodeMeta(node);
     lines.push(parent ? `Padre: ${parent.id} | ${meta}` : meta);
     lines.push(`URL: ${node.url}`);
-    lines.push(...formatNodeBody(node, 3));
+    lines.push(...formatNodeBody(node, 3, renderedImages));
   }
 
   if (textAttachments.length > 0) {
@@ -310,16 +313,11 @@ function formatWorkItemAsMarkdown(
     }
   }
 
-  if (imageNames.length > 0) {
-    lines.push("");
-    lines.push(`_Imágenes (${imageNames.length}): ${imageNames.map((n, i) => `[${i + 1}] ${n}`).join(", ")}_`);
-  }
-
   return lines.join("\n");
 }
 
 const server = new Server(
-  { name: "ticket-analyzer-mcp", version: "2.1.0" },
+  { name: "ticket-analyzer-mcp", version: "2.2.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -341,8 +339,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: "Include attached images (default: true). Set false to save tokens.",
             },
             max_comments: {
-              type: "number",
-              description: "Limit number of comments returned (most recent N). Default: no limit.",
+              type: "integer",
+              minimum: 0,
+              maximum: 200,
+              description: "Limit number of comments returned (most recent N). Default: 200.",
             },
             include_text_attachments: {
               type: "boolean",
@@ -367,8 +367,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: "Include attached images (default: true). Set false to save tokens.",
             },
             max_comments: {
-              type: "number",
-              description: "Limit number of comments returned (most recent N). Default: no limit.",
+              type: "integer",
+              minimum: 0,
+              maximum: 200,
+              description: "Limit number of comments returned (most recent N). Default: 200.",
             },
             include_text_attachments: {
               type: "boolean",
@@ -389,7 +391,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: "JQL query string (e.g. 'sprint in openSprints() AND status = \"In Progress\"')",
             },
             max_results: {
-              type: "number",
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
               description: "Max results to return (default: 20)",
             },
           },
@@ -460,15 +464,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             work_item_id: {
-              type: "number",
+              type: "integer",
+              minimum: 1,
+              maximum: 10000000,
               description: "Azure DevOps work item ID (e.g. 1596)",
             },
             max_depth: {
-              type: "number",
+              type: "integer",
+              minimum: 0,
+              maximum: 10,
               description: "How many levels of children to descend. Default: 3. Use 0 for the root work item alone.",
             },
             max_nodes: {
-              type: "number",
+              type: "integer",
+              minimum: 1,
+              maximum: 200,
               description: "Cap on total work items fetched, root included (default: 40). Guards against pulling a whole Epic tree.",
             },
             include_images: {
@@ -476,8 +486,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: "Include attached images (default: true). Set false to save tokens.",
             },
             max_comments: {
-              type: "number",
-              description: "Limit number of comments returned (most recent N). Default: no limit.",
+              type: "integer",
+              minimum: 0,
+              maximum: 200,
+              description: "Limit number of comments returned (most recent N). Default: 200.",
             },
             include_text_attachments: {
               type: "boolean",
@@ -498,7 +510,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               description: "WIQL query, or just the WHERE condition (e.g. \"[System.WorkItemType] = 'User Story' AND [System.State] = 'Active'\")",
             },
             max_results: {
-              type: "number",
+              type: "integer",
+              minimum: 1,
+              maximum: 100,
               description: "Max results to return (default: 20)",
             },
           },
@@ -512,7 +526,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             work_item_id: {
-              type: "number",
+              type: "integer",
+              minimum: 1,
+              maximum: 10000000,
               description: "Azure DevOps work item ID",
             },
             text: {
@@ -525,7 +541,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "analyze_ticket",
-        description: "Analyze a Jira issue, Trello card, Azure DevOps work item, or normalized ticket and return a structured engineering Context Package. Repo-free and deterministic.",
+        description: "Analyze a Jira issue, Trello card, Azure DevOps work item, or normalized ticket and return deterministic ticket-only evidence. Repository-unverified inferences are labeled; this is not a final implementation plan.",
         inputSchema: {
           type: "object",
           properties: {
@@ -536,6 +552,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           oneOf: [{ required: ["id"] }, { required: ["ticket"] }],
         },
+        outputSchema: ANALYZE_TICKET_OUTPUT_SCHEMA,
       },
       {
         name: "get_status",
@@ -571,12 +588,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         `[pm-mcp] Success: card "${card.name}", ${card.comments.length} comment(s), ${images.length} image(s), ${textAttachments.length} text attachment(s)`
       );
 
-      const imageNames = images.map((img) => img.name);
-
       const content: Array<
         | { type: "text"; text: string }
         | { type: "image"; data: string; mimeType: string }
-      > = [{ type: "text", text: formatCardAsMarkdown(card, imageNames, textAttachments) }];
+      > = [{ type: "text", text: formatCardAsMarkdown(card, images, textAttachments) }];
 
       for (const img of images) {
         content.push({ type: "text", text: `[Imagen: ${img.name}]` });
@@ -615,7 +630,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const content: Array<
         | { type: "text"; text: string }
         | { type: "image"; data: string; mimeType: string }
-      > = [{ type: "text", text: formatIssueAsMarkdown(issue, imageNames, textAttachments) }];
+      > = [{ type: "text", text: formatIssueAsMarkdown(issue, images, textAttachments) }];
 
       for (const img of images) {
         content.push({ type: "text", text: `[Imagen: ${img.name}]` });
@@ -768,7 +783,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const content: Array<
         | { type: "text"; text: string }
         | { type: "image"; data: string; mimeType: string }
-      > = [{ type: "text", text: formatWorkItemAsMarkdown(workItem, imageNames, textAttachments) }];
+      > = [{ type: "text", text: formatWorkItemAsMarkdown(workItem, images, textAttachments) }];
 
       for (const img of images) {
         content.push({ type: "text", text: `[Imagen: ${img.name}]` });

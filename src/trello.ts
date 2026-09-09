@@ -1,3 +1,6 @@
+import { downloadBytes, mapWithConcurrency } from "./download.js";
+import { assertFiniteInteger } from "./validation.js";
+
 export interface TrelloCard {
   name: string;
   desc: string;
@@ -15,6 +18,7 @@ export interface TrelloCard {
 }
 
 export interface TrelloAction {
+  id?: string;
   memberCreator: { fullName: string };
   date: string;
   data: { text: string };
@@ -39,6 +43,7 @@ export interface TrelloImage {
   name: string;
   mimeType: string;
   base64: string;
+  url?: string;
 }
 
 export interface TrelloChecklistItem {
@@ -51,6 +56,14 @@ export interface TrelloChecklistResult {
   items: TrelloChecklistItem[];
 }
 
+export interface CommentPagination {
+  complete: boolean;
+  nextCursor: string | null;
+  fetched: number;
+  budget: number;
+  reason?: "budget" | "cursor_unavailable" | "page_budget";
+}
+
 export interface TrelloCardResult {
   name: string;
   description: string;
@@ -59,6 +72,7 @@ export interface TrelloCardResult {
   due: string | null;
   members: string[];
   comments: TrelloComment[];
+  commentPagination: CommentPagination;
   checklists: TrelloChecklistResult[];
   attachments: { name: string; url: string; mimeType: string }[];
 }
@@ -72,6 +86,12 @@ export interface TrelloCardData {
 const TEXT_MIME_EXACT = new Set(["application/json", "application/sql", "application/xml"]);
 const TEXT_EXTENSIONS = new Set([".html", ".htm", ".sql", ".txt", ".md", ".json", ".csv", ".xml", ".yaml", ".yml"]);
 const MAX_TEXT_BYTES = 200_000;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_COMMENT_BUDGET = 200;
+const COMMENT_PAGE_SIZE = 100;
+const MAX_COMMENT_PAGES = 10;
+const TRELLO_API_ORIGIN = "https://api.trello.com";
+const TRELLO_ATTACHMENT_ORIGINS = [TRELLO_API_ORIGIN, "https://trello.com"];
 
 function stripHtmlNoise(content: string): string {
   return content
@@ -94,35 +114,22 @@ export function isTextAttachment(name: string, mimeType: string): boolean {
   return TEXT_EXTENSIONS.has(name.slice(dot).toLowerCase());
 }
 
-export async function downloadTextAttachment(
-  url: string
-): Promise<{ content: string; truncated: boolean } | null> {
+export async function downloadTextAttachment(url: string): Promise<{ content: string; truncated: boolean } | null> {
   const { apiKey, token } = getCredentials();
-  console.error(`[trello] Downloading text attachment: ${url}`);
-  try {
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `OAuth oauth_consumer_key="${apiKey}", oauth_token="${token}"`,
-      },
-    });
-    if (!response.ok) {
-      console.error(`[trello] Text download failed: HTTP ${response.status} for ${url}`);
-      return null;
-    }
-    let text = await response.text();
-    const ext = url.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
-    if (ext === "html" || ext === "htm") text = stripHtmlNoise(text);
-    if (text.length > MAX_TEXT_BYTES) {
-      return {
-        content: text.slice(0, MAX_TEXT_BYTES) + "\n[truncado: archivo excede 200 000 caracteres]",
-        truncated: true,
-      };
-    }
-    return { content: text, truncated: false };
-  } catch (err) {
-    console.error(`[trello] Text download error for ${url}:`, err);
-    return null;
-  }
+  const bytes = await downloadBytes(url, {
+    maxBytes: MAX_TEXT_BYTES,
+    allowTruncated: true,
+    headers: { Authorization: `OAuth oauth_consumer_key="${apiKey}", oauth_token="${token}"` },
+    credentialOrigins: TRELLO_ATTACHMENT_ORIGINS,
+    allowedOrigins: TRELLO_ATTACHMENT_ORIGINS,
+  });
+  if (!bytes) return null;
+  let text = new TextDecoder().decode(bytes);
+  const ext = url.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "html" || ext === "htm") text = stripHtmlNoise(text);
+  return bytes.byteLength >= MAX_TEXT_BYTES
+    ? { content: text.slice(0, MAX_TEXT_BYTES) + "\n[truncado: archivo excede 200 000 caracteres]", truncated: true }
+    : { content: text, truncated: false };
 }
 
 function getCredentials(): { apiKey: string; token: string } {
@@ -156,42 +163,15 @@ async function fetchTrello<T>(url: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5 MB
-
 export async function downloadImage(url: string): Promise<string | null> {
   const { apiKey, token } = getCredentials();
-  console.error(`[trello] Downloading image: ${url}`);
-
-  try {
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `OAuth oauth_consumer_key="${apiKey}", oauth_token="${token}"`,
-      },
-    });
-
-    if (!response.ok) {
-      console.error(`[trello] Image download failed: HTTP ${response.status} for ${url}`);
-      return null;
-    }
-
-    const contentLength = response.headers.get("content-length");
-    if (contentLength && parseInt(contentLength, 10) > MAX_IMAGE_BYTES) {
-      console.error(`[trello] Skipping image > 5MB: ${url}`);
-      return null;
-    }
-
-    const buffer = await response.arrayBuffer();
-
-    if (buffer.byteLength > MAX_IMAGE_BYTES) {
-      console.error(`[trello] Skipping image > 5MB after download: ${url}`);
-      return null;
-    }
-
-    return Buffer.from(buffer).toString("base64");
-  } catch (err) {
-    console.error(`[trello] Image download error for ${url}:`, err);
-    return null;
-  }
+  const bytes = await downloadBytes(url, {
+    maxBytes: MAX_IMAGE_BYTES,
+    headers: { Authorization: `OAuth oauth_consumer_key="${apiKey}", oauth_token="${token}"` },
+    credentialOrigins: TRELLO_ATTACHMENT_ORIGINS,
+    allowedOrigins: TRELLO_ATTACHMENT_ORIGINS,
+  });
+  return bytes ? Buffer.from(bytes).toString("base64") : null;
 }
 
 export async function getTrelloCard(
@@ -200,16 +180,25 @@ export async function getTrelloCard(
   maxComments?: number,
   includeTextAttachments = false
 ): Promise<TrelloCardData> {
+  if (maxComments !== undefined) assertFiniteInteger(maxComments, "max_comments", { min: 0, max: MAX_COMMENT_BUDGET });
   const { apiKey, token } = getCredentials();
-  const url = `https://api.trello.com/1/cards/${cardId}?fields=name,desc,due,labels&members=true&member_fields=fullName&checklists=all&list=true&list_fields=name&actions=commentCard&actions_limit=1000&attachments=true&attachment_fields=name,url,mimeType,isUpload,bytes&key=${apiKey}&token=${token}`;
+  const url = `https://api.trello.com/1/cards/${cardId}?fields=name,desc,due,labels&members=true&member_fields=fullName&checklists=all&list=true&list_fields=name&actions=commentCard&actions_limit=100&attachments=true&attachment_fields=name,url,mimeType,isUpload,bytes&key=${apiKey}&token=${token}`;
 
   console.error(`[trello] GET card ${cardId}`);
   const card = await fetchTrello<TrelloCard>(url);
 
   const rawActions = card.actions ?? [];
-  const limitedActions =
-    maxComments !== undefined ? rawActions.slice(0, maxComments) : rawActions;
-  const comments: TrelloComment[] = limitedActions.map((action) => ({
+  const budget = maxComments ?? MAX_COMMENT_BUDGET;
+  let fetchCursor = rawActions.at(-1)?.id ?? null;
+  let commentPages = 1;
+  while (rawActions.length < budget && rawActions.length >= COMMENT_PAGE_SIZE && fetchCursor && commentPages < MAX_COMMENT_PAGES) {
+    const page = await fetchTrello<TrelloAction[]>(`https://api.trello.com/1/cards/${cardId}/actions?filter=commentCard&limit=${Math.min(COMMENT_PAGE_SIZE, budget - rawActions.length)}&before=${encodeURIComponent(fetchCursor)}&key=${apiKey}&token=${token}`);
+    rawActions.push(...page);
+    fetchCursor = page.at(-1)?.id ?? null;
+    commentPages++;
+    if (page.length < COMMENT_PAGE_SIZE) break;
+  }
+  const comments: TrelloComment[] = rawActions.slice(0, budget).map((action) => ({
     author: action.memberCreator.fullName,
     date: action.date,
     text: action.data.text,
@@ -226,12 +215,14 @@ export async function getTrelloCard(
   let images: TrelloImage[] = [];
 
   if (includeImages) {
-    const downloadedImages = await Promise.all(
-      imageAttachments.map(async (a): Promise<TrelloImage | null> => {
+    const downloadedImages = await mapWithConcurrency(
+      imageAttachments,
+      3,
+      async (a): Promise<TrelloImage | null> => {
         const base64 = await downloadImage(a.url);
         if (!base64) return null;
-        return { name: a.name, mimeType: a.mimeType, base64 };
-      })
+        return { name: a.name, mimeType: a.mimeType, base64, url: a.url };
+      }
     );
     images = downloadedImages.filter((img): img is TrelloImage => img !== null);
   }
@@ -241,12 +232,14 @@ export async function getTrelloCard(
     const textCandidates = nonImageAttachments.filter((a) =>
       isTextAttachment(a.name, a.mimeType ?? "")
     );
-    const downloaded = await Promise.all(
-      textCandidates.map(async (a): Promise<TextAttachment | null> => {
+    const downloaded = await mapWithConcurrency(
+      textCandidates,
+      3,
+      async (a): Promise<TextAttachment | null> => {
         const result = await downloadTextAttachment(a.url);
         if (!result) return null;
         return { name: a.name, mimeType: a.mimeType, content: result.content, truncated: result.truncated };
-      })
+      }
     );
     textAttachments = downloaded.filter((t): t is TextAttachment => t !== null);
   }
@@ -263,6 +256,13 @@ export async function getTrelloCard(
       due: card.due ?? null,
       members: (card.members ?? []).map((m) => m.fullName),
       comments,
+      commentPagination: {
+            complete: rawActions.length < budget && commentPages < MAX_COMMENT_PAGES,
+            nextCursor: comments.at(-1) ? rawActions[Math.min(budget, rawActions.length) - 1]?.id ?? null : null,
+            fetched: comments.length,
+            budget,
+            ...(rawActions.length >= budget ? { reason: "budget" as const } : {}),
+          },
       checklists: (card.checklists ?? []).map((cl) => ({
         name: cl.name,
         items: [
@@ -274,7 +274,7 @@ export async function getTrelloCard(
             .map((i) => ({ text: i.name, done: true })),
         ],
       })),
-      attachments: nonImageAttachments.map((a) => ({
+      attachments: rawAttachments.map((a) => ({
         name: a.name,
         url: a.url,
         mimeType: a.mimeType,

@@ -19,12 +19,19 @@ function makeResponse(status: number, body: unknown): Response {
 }
 
 function makeTextResponse(status: number, body: string): Response {
+  const bytes = new TextEncoder().encode(body);
   return {
     ok: status >= 200 && status < 300,
     status,
     statusText: status === 200 ? "OK" : "Error",
     text: async () => body,
     headers: new Headers(),
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.close();
+      },
+    }),
   } as unknown as Response;
 }
 
@@ -171,7 +178,7 @@ describe("getJiraIssue", () => {
   beforeEach(() => {
     process.env = {
       ...OLD_ENV,
-      JIRA_HOST: "mycompany.atlassian.net",
+      JIRA_HOST: "jira.example.com",
       JIRA_EMAIL: "user@example.com",
       JIRA_API_TOKEN: "test-token",
     };
@@ -307,8 +314,11 @@ describe("getJiraIssue", () => {
     };
     mockFetch.mockResolvedValueOnce(makeResponse(200, raw));
 
-    const { images } = await getJiraIssue("PROJ-4", false);
+    const { issue, images } = await getJiraIssue("PROJ-4", false);
     expect(images).toEqual([]);
+    expect(issue.attachments).toEqual([
+      { name: "screenshot.png", mimeType: "image/png", url: "https://jira.example.com/att1" },
+    ]);
     // 2 calls: fields endpoint + issue endpoint (no image download)
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
@@ -421,7 +431,38 @@ describe("getJiraIssue", () => {
     expect(issue.comments[1].text).toBe("Comment 4");
   });
 
-  it("returns empty textAttachments when includeTextAttachments is false (default)", async () => {
+  it("uses a bounded default comment budget and reports incomplete pagination", async () => {
+     mockFetch.mockReset();
+     resetFieldCache();
+     const comment = (i: number) => ({
+       author: { displayName: `User${i}` },
+       created: `2024-01-01T00:00:${String(i).padStart(2, "0")}Z`,
+       body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: `Comment ${i}` }] }] },
+     });
+     const initial = Array.from({ length: 100 }, (_, i) => comment(i));
+     mockFetch.mockImplementation(async (input) => {
+       const url = String(input);
+       if (url.endsWith("/field")) return makeResponse(200, []);
+       if (url.includes("/issue/PROJ-41?")) return makeResponse(200, {
+         key: "PROJ-41",
+         fields: {
+           summary: "Busy issue",
+           comment: { comments: initial, total: 250, maxResults: 100 },
+           attachment: [],
+         },
+       });
+       if (url.includes("/comment?startAt=100")) {
+         return makeResponse(200, { comments: Array.from({ length: 100 }, (_, i) => comment(i + 100)), total: 250, maxResults: 100, startAt: 100 });
+       }
+       throw new Error(`unexpected fetch: ${url}`);
+     });
+
+     const { issue } = await getJiraIssue("PROJ-41", false);
+     expect(issue.comments).toHaveLength(200);
+     expect(issue.commentPagination).toEqual({ complete: false, nextCursor: "200", fetched: 200, budget: 200 });
+   });
+
+   it("returns empty textAttachments when includeTextAttachments is false (default)", async () => {
     const raw: MockJiraRaw = {
       key: "PROJ-50",
       fields: {
@@ -618,7 +659,7 @@ describe("downloadJiraText", () => {
   beforeEach(() => {
     process.env = {
       ...OLD_ENV,
-      JIRA_HOST: "mycompany.atlassian.net",
+      JIRA_HOST: "jira.example.com",
       JIRA_EMAIL: "user@example.com",
       JIRA_API_TOKEN: "test-token",
     };
@@ -637,7 +678,13 @@ describe("downloadJiraText", () => {
     expect(result!.truncated).toBe(false);
   });
 
-  it("follows 302 redirect and downloads text (no auth forwarded to S3)", async () => {
+  it("does not download an attachment from an untrusted origin", async () => {
+        mockFetch.mockResolvedValueOnce(makeTextResponse(200, "secret"));
+        await expect(downloadJiraText("https://evil.example/attachment.txt", authHeader)).resolves.toBeNull();
+        expect(mockFetch).not.toHaveBeenCalled();
+      });
+
+      it("follows 302 redirect and downloads text (no auth forwarded to S3)", async () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: false,
@@ -653,7 +700,7 @@ describe("downloadJiraText", () => {
     // second fetch must NOT include Authorization header (plain S3 URL)
     const [s3Url, s3Options] = mockFetch.mock.calls[1] as [string, RequestInit | undefined];
     expect(s3Url).toBe("https://s3.example.com/file.sql");
-    expect(s3Options).toBeUndefined();
+    expect(s3Options?.headers).toBeUndefined();
   });
 
   it("strips <style> and <script> from HTML attachments", async () => {

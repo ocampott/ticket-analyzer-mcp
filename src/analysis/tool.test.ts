@@ -41,6 +41,23 @@ describe("analyze_ticket handler", () => {
     const text = result.content[0].text;
     expect(text.startsWith("```json\n")).toBe(true);
     expect(JSON.parse(text.split("```json")[1].split("```")[0]).objective).toBe("Mejorar la búsqueda");
+    expect(result).toHaveProperty("structuredContent");
+    expect((result as { structuredContent?: { objective?: string } }).structuredContent?.objective).toBe("Mejorar la búsqueda");
+  });
+
+  test("keeps structured output available when text format is markdown", async () => {
+    const { handleAnalyzeTicket } = await import("./tool.js");
+    const result = await handleAnalyzeTicket({ ticket: featureAmbiguous, format: "markdown" });
+    expect(result.content[0].text).toContain("# Análisis del ticket");
+    expect(result.content[0].text).not.toContain("```json");
+    expect(result.structuredContent).toMatchObject({ objective: "Mejorar la búsqueda" });
+  });
+
+  test("publishes the supported object output schema", async () => {
+    const { ANALYZE_TICKET_OUTPUT_SCHEMA } = await import("./tool.js");
+    expect(ANALYZE_TICKET_OUTPUT_SCHEMA.type).toBe("object");
+    expect(ANALYZE_TICKET_OUTPUT_SCHEMA.required).toContain("executiveSummary");
+    expect(ANALYZE_TICKET_OUTPUT_SCHEMA.properties.ticketType).toMatchObject({ type: "object" });
   });
 
   test("rejects a request without a provider id or normalized ticket", async () => {

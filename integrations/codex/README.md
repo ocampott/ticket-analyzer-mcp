@@ -2,7 +2,7 @@
 
 `ticket-analyzer-mcp` supports Codex through the standard MCP interface. The server remains client-neutral; this directory contains the Codex instruction adapter.
 
-## One-command setup
+## Published package
 
 From the target project, run the secure interactive wizard:
 
@@ -10,7 +10,7 @@ From the target project, run the secure interactive wizard:
 npx -y ticket-analyzer-mcp@latest setup
 ```
 
-Choose the required providers with the checkbox selector, enter their credentials, then select **Codex** alone or with Claude Code and/or Pi. Leave all clients unchecked to configure later. Provider choices are labeled by purpose: Trello cards, Jira issues, and Azure DevOps work items. Before each provider prompt, the wizard explains the exact credential source and format. Azure DevOps requires a PAT with minimum `Work Items: Read`; `Work Items: Read & Write` is needed only for comments. The wizard writes secrets only to the ignored project-local `.env` and prints a grouped, non-secret registration command:
+Choose the required providers, enter their credentials, then select **Codex** alone or with Claude Code and/or Pi. The wizard writes secrets only to the ignored project-local `.env` and prints a grouped, non-secret registration command:
 
 ```bash
 codex mcp add ticket-analyzer \
@@ -18,15 +18,26 @@ codex mcp add ticket-analyzer \
   -- npx -y ticket-analyzer-mcp@latest
 ```
 
-Never put provider credentials in `codex mcp add`, shell history, or Codex configuration. The wizard never prints, echoes, logs, or includes credential values in commands, and it does not execute client CLIs or mutate client settings. Restart Codex after registering the server. If no client is selected, setup reports that credentials are ready locally but no agent client has been configured yet.
+The command follows `codex mcp add <NAME> --env KEY=VALUE -- COMMAND...`; use `codex mcp remove ticket-analyzer` to remove the registration. Never put provider credentials in Codex configuration or shell history. Setup does not execute client CLIs or mutate client settings.
 
-### Local development before publication
+Restart Codex after registering the server. The `@latest` spec resolves the current npm package when a new MCP process starts, so normal updates do not require a configuration edit. Restart Codex after an update. Pin an explicit version only when reproducibility is intentional.
 
-When the wizard is run directly from a local checkout, it prints a local Codex command instead of an unavailable npm version. Use that command until the release is published.
+## Local development
+
+Build a local checkout before running its setup wizard:
+
+```bash
+cd /absolute/path/to/ticket-analyzer-mcp
+npm install
+npm run build
+node /absolute/path/to/ticket-analyzer-mcp/bin/pm-mcp.js setup
+```
+
+Local setup prints a `node /absolute/path/to/ticket-analyzer-mcp/bin/pm-mcp.js` Codex command instead of an npm command. Rebuild after source changes and restart Codex. A package under `node_modules` is detected as published-package mode and prints pinned `2.2.0` npm guidance.
 
 ## Merge the instructions
 
-Merge `AGENTS.template.md` into the target project's existing `AGENTS.md`. Preserve existing instructions and headings; append or integrate the ticket-analysis section rather than replacing the file. If the project has no `AGENTS.md`, copy the template as the initial file.
+Merge `AGENTS.template.md` into the target project's existing `AGENTS.md`. Preserve existing instructions and headings; append or integrate the ticket-analysis section rather than replacing it. If the project has no `AGENTS.md`, copy the template as the initial file.
 
 The template is an adapter snapshot. Keep its instruction contract aligned with the repository root `AGENTS.md`; update server installation separately through npm.
 
@@ -36,9 +47,9 @@ The template is an adapter snapshot. Keep its instruction contract aligned with 
 - Jira: `JIRA_HOST`, `JIRA_EMAIL`, `JIRA_API_TOKEN`
 - Azure DevOps: `AZURE_DEVOPS_ORG`, `AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_PAT`
 
-The server loads `TICKET_ANALYZER_ENV_FILE` when set, otherwise `<cwd>/.env`. Real environment variables take precedence over file values.
+The server loads `TICKET_ANALYZER_ENV_FILE` when set, otherwise `<cwd>/.env`. Real environment variables take precedence. Azure DevOps requires a PAT with minimum `Work Items: Read`; `Work Items: Read & Write` is needed only for comments.
 
-## Use
+## Use and diagnostics
 
 Ask Codex naturally, for example:
 
@@ -46,8 +57,4 @@ Ask Codex naturally, for example:
 Analyze Azure DevOps ticket 1646 and make an implementation plan.
 ```
 
-The agent fetches and explores first, then waits for explicit confirmation before editing code or posting comments.
-
-## Updates
-
-Keep `npx -y ticket-analyzer-mcp@latest` in the Codex MCP entry. Restart Codex after an update. Re-merge the instruction template only when its instruction contract changes.
+The agent fetches and explores first, then waits for explicit confirmation before editing code or posting comments. For diagnostics, use `status` for local-only checks or `doctor` for provider connectivity checks.

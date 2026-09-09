@@ -14,6 +14,7 @@ import {
   searchAzureWorkItems,
   addAzureComment,
   getAzureStatus,
+      downloadAzureText,
 } from "./azure.js";
 
 function makeResponse(status: number, body: unknown): Response {
@@ -27,7 +28,23 @@ function makeResponse(status: number, body: unknown): Response {
   } as unknown as Response;
 }
 
-// ─── Part A: htmlToText ──────────────────────────────────────────────────────
+function makeStreamResponse(status: number, body: string): Response {
+  const bytes = new TextEncoder().encode(body);
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    statusText: status === 200 ? "OK" : "Error",
+    headers: new Headers(),
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.close();
+      },
+    }),
+  } as unknown as Response;
+}
+
+    // ─── Part A: htmlToText ──────────────────────────────────────────────────────
 
 describe("htmlToText", () => {
   it("returns empty string for null and undefined", () => {
@@ -407,11 +424,71 @@ describe("getAzureWorkItem", () => {
 
     expect(images).toEqual([]);
     expect(workItem.attachments).toEqual([
+      { name: "mmq.png", mimeType: "image/png", url: "https://dev.azure.com/o/_apis/wit/attachments/guid-1" },
       { name: "DMZ_3.zip", mimeType: "application/octet-stream", url: "https://dev.azure.com/o/_apis/wit/attachments/guid-2" },
     ]);
   });
 
-  it("shows an unreadable child as a stub instead of dropping it", async () => {
+  it("does not shift an unvisited sibling into a deeper level after an inaccessible child", async () => {
+        const root = {
+          id: 1,
+          fields: { "System.Title": "root", "System.WorkItemType": "Epic", "System.State": "New" },
+          relations: [
+            { rel: "System.LinkTypes.Hierarchy-Forward", url: "https://dev.azure.com/o/_apis/wit/workItems/2" },
+            { rel: "System.LinkTypes.Hierarchy-Forward", url: "https://dev.azure.com/o/_apis/wit/workItems/3" },
+          ],
+        };
+        mockFetch.mockImplementation(async (input) => {
+          const url = String(input);
+          if (url.includes("/workitems/1?")) return makeResponse(200, root);
+          if (url.includes("ids=2")) return makeResponse(200, { value: [] });
+          if (url.includes("ids=3")) return makeResponse(200, { value: [chainNode(3, 4)] });
+          if (url.includes("/comments")) return makeResponse(200, { comments: [], totalCount: 0, count: 0 });
+          throw new Error(`unexpected fetch: ${url}`);
+        });
+
+        const { workItem } = await getAzureWorkItem(1, false, undefined, false, 3, 2);
+        expect(workItem.nodeCount).toBe(1);
+        expect(workItem.children.map((child) => child.id)).toEqual([2, 3]);
+        expect(workItem.children[1].title).toMatch(/árbol truncado/);
+        expect(workItem.missingChildren).toEqual([
+          { id: 2, reason: "inaccessible" },
+          { id: 3, reason: "node_cap" },
+        ]);
+      });
+
+      it("caps and discloses parent and related hydration outside the tree budget", async () => {
+        const root = {
+          id: 1,
+          fields: { "System.Title": "root", "System.WorkItemType": "Epic", "System.State": "New" },
+          relations: [
+            { rel: "System.LinkTypes.Related", url: "https://dev.azure.com/o/_apis/wit/workItems/2" },
+            { rel: "System.LinkTypes.Related", url: "https://dev.azure.com/o/_apis/wit/workItems/3" },
+          ],
+        };
+        mockFetch.mockImplementation(async (input) => {
+          const url = String(input);
+          if (url.includes("/workitems/1?")) return makeResponse(200, root);
+          if (url.includes("/comments")) return makeResponse(200, { comments: [], totalCount: 0, count: 0 });
+          if (url.includes("ids=")) return makeResponse(200, { value: [
+            { id: 2, fields: { "System.Title": "related 2", "System.WorkItemType": "Task" } },
+            { id: 3, fields: { "System.Title": "related 3", "System.WorkItemType": "Task" } },
+          ] });
+          throw new Error(`unexpected fetch: ${url}`);
+        });
+
+        const { workItem } = await getAzureWorkItem(1, false, undefined, false, 0, 1);
+        expect(workItem.related).toEqual([
+          { id: 2, title: "(work item 2 omitido por max_nodes)", type: "" },
+          { id: 3, title: "(work item 3 omitido por max_nodes)", type: "" },
+        ]);
+        expect(workItem.missingLinks).toEqual([
+          { id: 2, relation: "related", reason: "node_cap" },
+          { id: 3, relation: "related", reason: "node_cap" },
+        ]);
+      });
+
+      it("shows an unreadable child as a stub instead of dropping it", async () => {
     mockFetch.mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("/workitems/1596")) return makeResponse(200, WORK_ITEM_RAW);
@@ -496,6 +573,20 @@ describe("getAzureWorkItem", () => {
     const commentCalls = mockFetch.mock.calls.filter(([u]) => String(u).includes("/comments"));
     const ids = commentCalls.map(([u]) => /workItems\/(\d+)\/comments/.exec(String(u))?.[1]);
     expect(new Set(ids)).toEqual(new Set(["1596", "1660"]));
+  });
+
+  it("does not download an attachment from an untrusted origin", async () => {
+        mockFetch.mockResolvedValueOnce(makeResponse(200, "secret"));
+        await expect(downloadAzureText("https://evil.example/attachment.txt", "Basic secret")).resolves.toBeNull();
+        expect(mockFetch).not.toHaveBeenCalled();
+      });
+
+      it("downloads text attachment content from Azure", async () => {
+    mockFetch.mockResolvedValueOnce(makeStreamResponse(200, "SELECT * FROM users;"));
+    await expect(downloadAzureText("https://dev.azure.com/o/_apis/wit/attachments/guid-text", "Basic secret")).resolves.toEqual({
+      content: "SELECT * FROM users;",
+      truncated: false,
+    });
   });
 
   it("reports a missing work item plainly", async () => {

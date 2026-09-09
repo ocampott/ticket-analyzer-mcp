@@ -11,6 +11,7 @@ export function deriveSignals(ticket: NormalizedTicket): TicketSignals {
       child.title,
       child.description,
       child.acceptanceCriteria,
+      child.reproSteps ?? "",
       ...child.comments.map((c) => c.text),
       ...child.attachments.map((a) => a.name),
     ]),

@@ -5,6 +5,8 @@ import { loginGoogle } from "./__fixtures__/tickets.js";
 test("renderMarkdown includes headline sections", () => {
   const md = renderMarkdown(analyzeTicket(loginGoogle));
   expect(md).toContain("# Análisis");
+  expect(md).toContain("Evidencia determinística del ticket únicamente");
+  expect(md).toContain("no es un plan final de implementación");
   expect(md).toContain("## Resumen ejecutivo");
   expect(md).toMatch(/Tipo:|Complejidad:/);
 });

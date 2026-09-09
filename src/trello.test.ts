@@ -26,12 +26,19 @@ function makeResponse(status: number, body: unknown): Response {
 }
 
 function makeTextResponse(status: number, body: string): Response {
+  const bytes = new TextEncoder().encode(body);
   return {
     ok: status >= 200 && status < 300,
     status,
     statusText: status === 200 ? "OK" : "Error",
     text: async () => body,
     headers: new Headers(),
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.close();
+      },
+    }),
   } as unknown as Response;
 }
 
@@ -133,8 +140,10 @@ describe("getTrelloCard", () => {
     expect(images).toEqual([]);
     // Only 1 fetch call for the card itself — no download fetch
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    // The image attachment should NOT appear in card.attachments (it's image type)
-    expect(result.attachments).toHaveLength(0);
+    // Image bytes are skipped, but attachment metadata remains discoverable.
+    expect(result.attachments).toEqual([
+      { name: "screenshot.png", url: "https://trello.com/att1", mimeType: "image/png" },
+    ]);
   });
 
   it("downloads images when includeImages is true", async () => {
@@ -153,6 +162,12 @@ describe("getTrelloCard", () => {
       statusText: "OK",
       headers: new Headers({ "content-length": "3" }),
       arrayBuffer: async () => imageData,
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array(imageData));
+          controller.close();
+        },
+      }),
       json: async () => ({}),
     } as unknown as Response;
 
@@ -230,7 +245,37 @@ describe("getTrelloCard", () => {
     expect(result.comments[1].text).toBe("Second");
   });
 
-  it("returns empty textAttachments when includeTextAttachments is false (default)", async () => {
+  it("keeps the pagination cursor after the last returned comment", async () => {
+        const actions = Array.from({ length: 100 }, (_, i) => ({
+          id: `action-${i + 1}`,
+          memberCreator: { fullName: `User${i + 1}` },
+          date: `2024-01-${String(i + 1).padStart(2, "0")}T00:00:00.000Z`,
+          data: { text: `Comment ${i + 1}` },
+        }));
+        mockFetch.mockResolvedValueOnce(makeResponse(200, {
+          name: "Busy card",
+          desc: "",
+          actions,
+          attachments: [],
+        }));
+
+        const { card: result } = await getTrelloCard("abc123", false, 2);
+        expect(result.comments.map((comment) => comment.text)).toEqual(["Comment 1", "Comment 2"]);
+        expect(result.commentPagination).toMatchObject({
+          complete: false,
+          nextCursor: "action-2",
+          fetched: 2,
+          budget: 2,
+        });
+      });
+
+      it("does not download an attachment from an untrusted origin", async () => {
+        mockFetch.mockResolvedValueOnce(makeTextResponse(200, "secret"));
+        await expect(downloadTextAttachment("https://evil.example/attachment.txt")).resolves.toBeNull();
+        expect(mockFetch).not.toHaveBeenCalled();
+      });
+
+      it("returns empty textAttachments when includeTextAttachments is false (default)", async () => {
     const card: TrelloCard = {
       name: "Card",
       desc: "",
