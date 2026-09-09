@@ -7,7 +7,7 @@
 Install one machine-wide published CLI version:
 
 ```bash
-npm install --global ticket-analyzer-mcp@2.2.2
+npm install --global ticket-analyzer-mcp@2.3.0
 ```
 
 From the project that should own credentials, run:
@@ -16,7 +16,16 @@ From the project that should own credentials, run:
 ticket-analyzer-mcp setup
 ```
 
-Setup writes selected credentials to the ignored project-local `.env`, preserves unrelated keys, and never modifies client configuration or prints secrets. Users update the central version with `npm update --global ticket-analyzer-mcp`; reinstall an exact global version to pin it. The alternative `npm install ticket-analyzer-mcp@2.2.2` is isolated to one project.
+Setup writes selected credentials to the ignored project-local `.env`, preserves unrelated keys, and never modifies client configuration or prints secrets. Users update the central version with `npm update --global ticket-analyzer-mcp`; reinstall an exact global version to pin it. The alternative `npm install ticket-analyzer-mcp@2.3.0` is isolated to one project.
+
+Client configuration is explicitly opt-in:
+
+```bash
+ticket-analyzer-mcp setup --configure-clients
+ticket-analyzer-mcp setup --configure-clients --dry-run
+```
+
+Normal mode detects `claude`, `codex`, and `pi` on `PATH`, prints one non-secret plan, and asks once per selected available client before executing its create/install commands. Client CLIs run with a limited environment and no provider credentials. Unavailable or declined clients are nonfatal. `--dry-run` prints the same plan without confirmation or child execution, but may write `.env` if providers are selected. Legacy `setup` remains credential-only. The wizard does not inspect, replace, or remove existing client registrations; users must update those manually and restart the relevant client after configuration or updates. On Windows, `shell: false` cannot use `.cmd` or `.bat` shims; a direct executable is required.
 
 Use the direct binary for the standalone server and diagnostics:
 

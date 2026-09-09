@@ -1,11 +1,12 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, statSync } from "node:fs";
+import { spawn } from "node:child_process";
 import path from "node:path";
 import process from "node:process";
-import { checkbox, input as inquirerInput, password } from "@inquirer/prompts";
+import { checkbox, confirm, input as inquirerInput, password } from "@inquirer/prompts";
 import dotenv from "dotenv";
 
-const VERSION = "2.2.2";
+const VERSION = "2.3.0";
 const ENV_FILE_VARIABLE = "TICKET_ANALYZER_ENV_FILE";
 const PROVIDERS = {
   trello: ["TRELLO_API_KEY", "TRELLO_TOKEN"],
@@ -94,12 +95,195 @@ const CLIENT_CHOICES = [
   { name: "Pi", value: "pi" },
 ];
 const CLIENT_LABELS = { claude: "Claude Code", codex: "OpenAI Codex", pi: "Pi" };
+const CLIENT_EXECUTABLES = { claude: "claude", codex: "codex", pi: "pi" };
+const CLIENT_RESTART_GUIDANCE = {
+  claude: "Restart Claude Code after the commands complete.",
+  codex: "Restart Codex after registration.",
+  pi: "Restart or reload Pi after installation.",
+};
+const CLIENT_COMMANDS = {
+  claude: () => [
+    ["plugin", "marketplace", "add", "ocampott/ticket-analyzer-mcp"],
+    ["plugin", "install", "ticket-analyzer@ticket-analyzer-mcp"],
+  ],
+  codex: (filePath) => [
+    ["mcp", "add", "ticket-analyzer", "--env", `${ENV_FILE_VARIABLE}=${filePath}`, "--", "ticket-analyzer-mcp"],
+  ],
+  pi: () => [["install", "-l", "npm:ticket-analyzer-mcp@2.3.0"]],
+};
+
+export function parseSetupArgs(args) {
+  const seen = new Set();
+  for (const arg of args) {
+    if (arg !== "--configure-clients" && arg !== "--dry-run") {
+      throw new Error(`Invalid setup argument: ${arg}`);
+    }
+    if (seen.has(arg)) throw new Error(`Invalid setup argument: duplicate ${arg}`);
+    seen.add(arg);
+  }
+  const configureClients = seen.has("--configure-clients");
+  const dryRun = seen.has("--dry-run");
+  if (dryRun && !configureClients) {
+    throw new Error("Invalid setup argument: --dry-run requires --configure-clients");
+  }
+  return { configureClients, dryRun };
+}
+
+const CLIENT_ENV_KEYS = new Set([
+  "PATH",
+  "HOME",
+  "USERPROFILE",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "XDG_CONFIG_HOME",
+  "SYSTEMROOT",
+  "WINDIR",
+  "COMSPEC",
+  "PATHEXT",
+  "TEMP",
+  "TMP",
+  "LANG",
+  "LC_ALL",
+  "TERM",
+]);
+const SECRET_KEY_PATTERN = /token|secret|password|api[_-]?key|(?:^|[_-])pat$/i;
+const PROVIDER_SECRET_KEYS = new Set(Object.values(PROVIDERS).flat());
+
+export function deriveClientEnvironment(sourceEnv = process.env) {
+  const safeEnv = {};
+  for (const [key, value] of Object.entries(sourceEnv ?? {})) {
+    if (
+      CLIENT_ENV_KEYS.has(key) &&
+      key !== ENV_FILE_VARIABLE &&
+      !PROVIDER_SECRET_KEYS.has(key) &&
+      !SECRET_KEY_PATTERN.test(key) &&
+      typeof value === "string"
+    ) {
+      safeEnv[key] = value;
+    }
+  }
+  return safeEnv;
+}
+
+export function resolveExecutable(name, env = process.env, cwd = process.cwd(), platform = process.platform) {
+  const pathValue = typeof env.PATH === "string" ? env.PATH : "";
+  const delimiter = platform === "win32" ? ";" : path.delimiter;
+  const extensions = platform === "win32" ? [".exe"] : [""];
+  for (const directory of pathValue.split(delimiter)) {
+    const resolvedDirectory = directory ? path.resolve(cwd, directory) : cwd;
+    for (const extension of extensions) {
+      const candidate = path.join(resolvedDirectory, `${name}${extension}`);
+      try {
+        const mode = statSync(candidate).mode;
+        accessSync(candidate, platform === "win32" ? fsConstants.F_OK : fsConstants.X_OK);
+        if (statSync(candidate).isFile() && (platform === "win32" || mode & 0o111)) return candidate;
+      } catch {
+        // Continue searching PATH without invoking a shell or `which`.
+      }
+    }
+  }
+  return null;
+}
+
+function boundedOutput(capture, chunk, limit) {
+  const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+  const remaining = Math.max(0, limit - capture.bytes);
+  if (remaining > 0) {
+    const bounded = bytes.subarray(0, remaining);
+    capture.chunks.push(bounded.toString());
+    capture.bytes += bounded.byteLength;
+  }
+}
+
+function redactSecretLikeValues(text, secretValues = []) {
+  let safe = String(text ?? "");
+  for (const secret of [...new Set(secretValues)].filter(nonEmpty).sort((a, b) => b.length - a.length)) {
+    safe = safe.replaceAll(secret, "[redacted]");
+  }
+  return safe.replace(/((?:token|pat|secret|password|api[_-]?key)\s*[=:]\s*)[^\s,;]+/gi, "$1[redacted]");
+}
+
+export function runCommand(file, args, options = {}) {
+  const maxOutputBytes = options.maxOutputBytes ?? 16 * 1024;
+  const timeoutMs = options.timeoutMs ?? 60_000;
+  const secretValues = options.secretValues ?? [];
+  const spawnProcess = options.spawnProcess ?? spawn;
+  const safeEnv = deriveClientEnvironment(options.clientEnv ?? options.env ?? process.env);
+  return new Promise((resolve, reject) => {
+    let child;
+    let settled = false;
+    let timer;
+    const stdout = { chunks: [], bytes: 0 };
+    const stderr = { chunks: [], bytes: 0 };
+    const onStdout = (chunk) => boundedOutput(stdout, chunk, maxOutputBytes);
+    const onStderr = (chunk) => boundedOutput(stderr, chunk, maxOutputBytes);
+    const onError = (error) => settleFailure(error?.message ?? String(error), error?.code);
+    const onClose = (code) => {
+      if (code === 0) {
+        settleSuccess({ stdout: redactSecretLikeValues(stdout.chunks.join(""), secretValues), stderr: redactSecretLikeValues(stderr.chunks.join(""), secretValues) });
+        return;
+      }
+      const details = stderr.chunks.join("") || stdout.chunks.join("") || `exit code ${code}`;
+      settleFailure(details);
+    };
+    const removeListener = (target, event, listener) => target?.removeListener?.(event, listener);
+    const cleanup = () => {
+      clearTimeout(timer);
+      removeListener(child, "error", onError);
+      removeListener(child, "close", onClose);
+      removeListener(child?.stdout, "data", onStdout);
+      removeListener(child?.stderr, "data", onStderr);
+    };
+    const settleFailure = (message, code) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      const error = new Error(redactSecretLikeValues(message, secretValues));
+      if (code) error.code = code;
+      reject(error);
+    };
+    const settleSuccess = (result) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+    try {
+      child = spawnProcess(file, args, {
+        cwd: options.cwd,
+        env: safeEnv,
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      child.stdout?.on("data", onStdout);
+      child.stderr?.on("data", onStderr);
+      child.once("error", onError);
+      child.once("close", onClose);
+      timer = setTimeout(() => {
+        if (settled) return;
+        const timeoutError = new Error(`Client command timed out after ${timeoutMs}ms`);
+        timeoutError.code = "ETIMEDOUT";
+        settled = true;
+        cleanup();
+        try {
+          child.kill?.();
+        } catch {
+          // The timeout result remains authoritative even if termination fails.
+        }
+        reject(timeoutError);
+      }, timeoutMs);
+    } catch (error) {
+      settleFailure(error?.message ?? String(error), error?.code);
+    }
+  });
+}
 
 export function createPromptAdapter(stdin = process.stdin, stdout = process.stdout) {
   const context = { input: stdin, output: stdout };
   return {
     providers: () => checkbox({ message: "Providers to configure:", choices: PROVIDER_CHOICES }, context),
     client: () => checkbox({ message: "Clients to configure (leave all unchecked to configure later):", choices: CLIENT_CHOICES }, context),
+    confirmClient: ({ message }) => confirm({ message }, context),
     input: ({ message }) => inquirerInput({ message }, context),
     password: ({ message }) => password({ message, mask: "*" }, context),
     close: () => {},
@@ -171,9 +355,96 @@ async function loadCommandEnvironment(options) {
   return { env, values, filePath, file };
 }
 
+function readableArg(value) {
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : shellQuote(value);
+}
+
+function readableCommand(executable, args) {
+  return [executable, ...args].map(readableArg).join(" ");
+}
+
+function secretValuesFrom(values) {
+  return Object.values(values).filter(nonEmpty);
+}
+
+async function configureSelectedClients({ clients, filePath, cwd, env, finalValues, options, promptAdapter, stdout, stderr }) {
+  const resolve = options.resolveExecutable ?? ((name) => resolveExecutable(name, env, cwd));
+  const commandRunner = options.runCommand ?? runCommand;
+  const available = new Map();
+  const plan = [];
+  for (const client of clients) {
+    const executable = CLIENT_EXECUTABLES[client];
+    let resolved;
+    try {
+      resolved = await resolve(executable);
+    } catch (error) {
+      resolved = null;
+      plan.push({ client, executable, commands: CLIENT_COMMANDS[client](filePath), detectionError: error });
+      continue;
+    }
+    const commands = CLIENT_COMMANDS[client](filePath);
+    plan.push({ client, executable, commands, resolved });
+    if (resolved) available.set(client, { executable, resolved, commands });
+  }
+
+  writeOutput(stdout, "Client configuration plan:");
+  for (const item of plan) {
+    const status = item.resolved ? "available" : "unavailable";
+    writeOutput(stdout, `- ${status} — ${CLIENT_LABELS[item.client]}`);
+    for (const args of item.commands) writeOutput(stdout, `  Command: ${readableCommand(item.executable, args)}`);
+    if (!item.resolved) {
+      const manualAction = process.platform === "win32"
+        ? "  Manual action: install a direct .exe client; .cmd/.bat shims are unsupported with shell:false, then rerun setup with --configure-clients."
+        : "  Manual action: install or enable this client, then rerun setup with --configure-clients.";
+      writeOutput(stdout, manualAction);
+    }
+    writeOutput(stdout, `  Restart: ${CLIENT_RESTART_GUIDANCE[item.client]}`);
+  }
+  if (options.dryRun) {
+    writeOutput(stdout, "Dry-run: does not configure clients; no confirmations or client commands are executed.");
+    return 0;
+  }
+
+  const secretValues = secretValuesFrom(finalValues);
+  let failed = false;
+  for (const client of clients) {
+    const target = available.get(client);
+    if (!target) continue;
+    const confirmed = await promptAdapter.confirmClient({
+      client,
+      label: CLIENT_LABELS[client],
+      commands: target.commands,
+      message: `Configure ${CLIENT_LABELS[client]} now?`,
+    });
+    if (!confirmed) {
+      writeOutput(stdout, `Declined ${CLIENT_LABELS[client]}; no client commands were executed.`);
+      continue;
+    }
+    try {
+      for (const args of target.commands) {
+        await commandRunner(target.resolved, args, {
+          cwd,
+          shell: false,
+          clientEnv: deriveClientEnvironment(env),
+          secretValues,
+          timeoutMs: options.timeoutMs,
+          spawnProcess: options.spawnProcess,
+        });
+      }
+      writeOutput(stdout, `Configured ${CLIENT_LABELS[client]}.`);
+    } catch (error) {
+      failed = true;
+      const detail = redactSecretLikeValues(error instanceof Error ? error.message : String(error), secretValues);
+      writeOutput(stderr, `${CLIENT_LABELS[client]} configuration failed: ${detail}`);
+    }
+  }
+  return failed ? 1 : 0;
+}
+
 export async function setupCommand(options = {}) {
   const stdin = options.stdin ?? process.stdin;
   const stdout = options.stdout ?? process.stdout;
+  const stderr = options.stderr ?? process.stderr;
   if (!stdin.isTTY) {
     writeOutput(stdout, "Setup requires an interactive terminal. Run `ticket-analyzer-mcp setup` from a TTY.");
     throw new Error("Setup requires an interactive terminal; refusing to read credentials from non-TTY stdin.");
@@ -219,12 +490,24 @@ export async function setupCommand(options = {}) {
     const clients = parseClients(await promptAdapter.client());
     if (clients.length === 0) {
       writeOutput(stdout, "Credentials are ready locally but no agent client has been configured yet.");
+    } else if (options.configureClients) {
+      return await configureSelectedClients({
+        clients,
+        filePath,
+        cwd,
+        env,
+        finalValues,
+        options,
+        promptAdapter,
+        stdout,
+        stderr,
+      });
     } else {
       writeOutput(stdout, "Next steps (setup does not execute client CLIs or change client settings):");
       for (const client of clients) {
         writeOutput(stdout, `${CLIENT_LABELS[client]}:`);
         if (client === "pi") {
-          writeOutput(stdout, "Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.2.2");
+          writeOutput(stdout, "Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.3.0");
         } else if (client === "codex") {
           const serverCommand = "ticket-analyzer-mcp";
           writeOutput(stdout, `Next step for Codex: codex mcp add ticket-analyzer --env ${ENV_FILE_VARIABLE}=${shellQuote(filePath)} -- ${serverCommand}`);
@@ -290,11 +573,13 @@ export async function doctorCommand(options = {}) {
 
 function helpText() {
   return [
-    "ticket-analyzer-mcp 2.2.2",
+    "ticket-analyzer-mcp 2.3.0",
     "",
     "Usage:",
     "  ticket-analyzer-mcp              Start the MCP server over stdio",
     "  ticket-analyzer-mcp setup        Configure selected providers in the project .env",
+    "      --configure-clients          Detect and configure selected Claude Code, Codex, or Pi clients",
+    "      --dry-run                     Show the client plan; does not configure clients (credential setup may still run)",
     "  ticket-analyzer-mcp doctor       Diagnose Node, .env, provider, and connection status",
     "  ticket-analyzer-mcp status       Check local provider configuration without network calls",
     "  ticket-analyzer-mcp --help       Show this help",
@@ -303,24 +588,40 @@ function helpText() {
 
 export async function runCli(argv = process.argv.slice(2), options = {}) {
   const command = argv[0];
+  const commandArgs = argv.slice(1);
+  const stdout = options.stdout ?? process.stdout;
+  const stderr = options.stderr ?? process.stderr;
   if (command === "--help" || command === "-h" || command === "help") {
-    writeOutput(options.stdout ?? process.stdout, helpText());
+    if (commandArgs.length > 0) {
+      writeOutput(stderr, `Invalid argument for ${command}: ${commandArgs[0]}. Run with --help for usage.`);
+      return 1;
+    }
+    writeOutput(stdout, helpText());
     return 0;
   }
   if (command === "setup") {
-    await setupCommand(options);
-    return 0;
+    try {
+      const setupArgs = parseSetupArgs(commandArgs);
+      return (await setupCommand({ ...options, ...setupArgs })) ?? 0;
+    } catch (error) {
+      if (error instanceof Error && /^Invalid setup argument:/i.test(error.message)) {
+        writeOutput(stderr, `${error.message}. Run with --help for usage.`);
+        return 1;
+      }
+      throw error;
+    }
   }
-  if (command === "doctor") {
-    await doctorCommand(options);
-    return 0;
-  }
-  if (command === "status") {
-    await statusCommand(options);
+  if (command === "doctor" || command === "status") {
+    if (commandArgs.length > 0) {
+      writeOutput(stderr, `Invalid argument for ${command}: ${commandArgs[0]}. Run with --help for usage.`);
+      return 1;
+    }
+    if (command === "doctor") await doctorCommand(options);
+    else await statusCommand(options);
     return 0;
   }
   if (command) {
-    writeOutput(options.stderr ?? process.stderr, `Unknown command: ${command}. Run with --help for usage.`);
+    writeOutput(stderr, `Unknown command: ${command}. Run with --help for usage.`);
     return 1;
   }
   if (options.startServer) return options.startServer();

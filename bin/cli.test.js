@@ -1,10 +1,14 @@
 import { jest } from "@jest/globals";
-import { mkdtemp, readFile, writeFile, stat } from "node:fs/promises";
+import { EventEmitter } from "node:events";
+import { chmod, mkdtemp, mkdir, readFile, writeFile, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
   doctorCommand,
+  parseSetupArgs,
+  resolveExecutable,
   runCli,
+  runCommand,
   setupCommand,
   statusCommand,
 } from "./cli.js";
@@ -20,8 +24,10 @@ describe("ticket-analyzer CLI", () => {
     const output = [];
     await runCli(["--help"], { stdout: { write: (text) => output.push(text) } });
     const text = output.join(" ");
-    expect(text).toContain("ticket-analyzer-mcp 2.2.2");
+    expect(text).toContain("ticket-analyzer-mcp 2.3.0");
     expect(text).toContain("ticket-analyzer-mcp setup");
+    expect(text).toContain("--configure-clients");
+    expect(text).toMatch(/--dry-run.*does not configure clients/i);
     expect(text).not.toContain("npx");
   });
 
@@ -65,7 +71,7 @@ describe("ticket-analyzer CLI", () => {
     expect(promptAdapter.providers).toHaveBeenCalledTimes(1);
     expect(promptAdapter.client).toHaveBeenCalledTimes(1);
     const text = output.join(" ");
-    expect(text).toContain("Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.2.2");
+    expect(text).toContain("Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.3.0");
     expect(text).not.toMatch(/node .*ticket-analyzer-mcp.*pm-mcp\.js/);
     expect((await stat(path.join(cwd, ".env"))).mode & 0o777).toBe(0o600);
   });
@@ -204,7 +210,7 @@ describe("ticket-analyzer CLI", () => {
     });
 
     const text = output.join(" ");
-    expect(text).toContain("Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.2.2");
+    expect(text).toContain("Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.3.0");
     expect(text).not.toContain(packageRoot);
   });
 
@@ -298,5 +304,405 @@ describe("ticket-analyzer CLI", () => {
     });
     expect(output.join(" ")).toMatch(/Jira.*error.*invalid credentials/i);
     expect(output.join(" ")).not.toContain("super-secret-token");
+  });
+
+  test.each([
+    [["--configure-clients"], { configureClients: true, dryRun: false }],
+    [["--dry-run", "--configure-clients"], { configureClients: true, dryRun: true }],
+    [["--configure-clients", "--dry-run"], { configureClients: true, dryRun: true }],
+  ])("parses client setup flags: %p", (args, expected) => {
+    expect(parseSetupArgs(args)).toEqual(expected);
+  });
+
+  test.each([
+    ["--dry-run"],
+    ["--configure-clients", "--configure-clients"],
+    ["--dry-run", "--dry-run"],
+    ["--configure-clients", "unexpected"],
+  ])("rejects invalid setup arguments: %p", (args) => {
+    expect(() => parseSetupArgs(args)).toThrow(/invalid setup argument/i);
+  });
+
+  test("legacy setup never detects or executes client commands", async () => {
+    const output = [];
+    const resolveExecutable = jest.fn();
+    const runCommand = jest.fn();
+    const promptAdapter = {
+      providers: jest.fn().mockResolvedValue([]),
+      client: jest.fn().mockResolvedValue(["claude"]),
+      confirmClient: jest.fn(),
+    };
+
+    await setupCommand({
+      cwd: await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-")),
+      env: {},
+      stdin: { isTTY: true },
+      stdout: { write: (text) => output.push(text) },
+      promptAdapter,
+      resolveExecutable,
+      runCommand,
+    });
+
+    expect(resolveExecutable).not.toHaveBeenCalled();
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(promptAdapter.confirmClient).not.toHaveBeenCalled();
+    expect(output.join(" ")).toMatch(/does not execute client CLIs/i);
+  });
+
+  test("dry-run prints a plan without confirmations or child processes", async () => {
+    const output = [];
+    const promptAdapter = {
+      providers: jest.fn().mockResolvedValue([]),
+      client: jest.fn().mockResolvedValue(["claude", "codex", "pi"]),
+      confirmClient: jest.fn(),
+    };
+    const runCommand = jest.fn();
+
+    await setupCommand({
+      cwd: await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-")),
+      env: {},
+      stdin: { isTTY: true },
+      stdout: { write: (text) => output.push(text) },
+      promptAdapter,
+      configureClients: true,
+      dryRun: true,
+      resolveExecutable: jest.fn().mockImplementation((name) => `/usr/local/bin/${name}`),
+      runCommand,
+    });
+
+    const text = output.join(" ");
+    expect(text).toMatch(/client configuration plan/i);
+    expect(text).toMatch(/available.*Claude Code/i);
+    expect(text).toContain("claude plugin marketplace add ocampott/ticket-analyzer-mcp");
+    expect(text).toContain("codex mcp add ticket-analyzer");
+    expect(text).toContain("pi install -l npm:ticket-analyzer-mcp@2.3.0");
+    expect(text).toMatch(/dry-run.*does not configure clients/i);
+    expect(promptAdapter.confirmClient).not.toHaveBeenCalled();
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  test("unavailable clients are reported without confirmation and remain nonfatal", async () => {
+    const output = [];
+    const promptAdapter = {
+      providers: jest.fn().mockResolvedValue([]),
+      client: jest.fn().mockResolvedValue(["codex"]),
+      confirmClient: jest.fn(),
+    };
+    const runCommand = jest.fn();
+
+    const result = await setupCommand({
+      cwd: await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-")),
+      env: {},
+      stdin: { isTTY: true },
+      stdout: { write: (text) => output.push(text) },
+      promptAdapter,
+      configureClients: true,
+      resolveExecutable: jest.fn().mockReturnValue(null),
+      runCommand,
+    });
+
+    expect(result).toBe(0);
+    expect(output.join(" ")).toMatch(/unavailable.*OpenAI Codex/i);
+    expect(promptAdapter.confirmClient).not.toHaveBeenCalled();
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  test("executes only confirmed clients with exact argument vectors and shell disabled", async () => {
+    const output = [];
+    const calls = [];
+    const promptAdapter = {
+      providers: jest.fn().mockResolvedValue([]),
+      client: jest.fn().mockResolvedValue(["claude", "codex", "pi"]),
+      confirmClient: jest.fn().mockImplementation(({ client }) => client !== "codex"),
+    };
+    const runCommand = jest.fn(async (file, args, options) => {
+      calls.push({ file, args, options });
+    });
+
+    const result = await setupCommand({
+      cwd: await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-")),
+      env: {},
+      stdin: { isTTY: true },
+      stdout: { write: (text) => output.push(text) },
+      promptAdapter,
+      configureClients: true,
+      resolveExecutable: jest.fn().mockImplementation((name) => `/bin/${name}`),
+      runCommand,
+    });
+
+    expect(result).toBe(0);
+    expect(promptAdapter.confirmClient).toHaveBeenCalledTimes(3);
+    expect(calls).toEqual([
+      {
+        file: "/bin/claude",
+        args: ["plugin", "marketplace", "add", "ocampott/ticket-analyzer-mcp"],
+        options: expect.objectContaining({ shell: false }),
+      },
+      {
+        file: "/bin/claude",
+        args: ["plugin", "install", "ticket-analyzer@ticket-analyzer-mcp"],
+        options: expect.objectContaining({ shell: false }),
+      },
+      {
+        file: "/bin/pi",
+        args: ["install", "-l", "npm:ticket-analyzer-mcp@2.3.0"],
+        options: expect.objectContaining({ shell: false }),
+      },
+    ]);
+    expect(calls.some(({ options }) => options.shell === true)).toBe(false);
+  });
+
+  test("continues after a client failure and returns nonzero", async () => {
+    const output = [];
+    const attempted = [];
+    const promptAdapter = {
+      providers: jest.fn().mockResolvedValue([]),
+      client: jest.fn().mockResolvedValue(["claude", "codex"]),
+      confirmClient: jest.fn().mockResolvedValue(true),
+    };
+    const runCommand = jest.fn(async (file) => {
+      attempted.push(file);
+      if (file === "/bin/claude") throw new Error("client failed");
+    });
+
+    const result = await setupCommand({
+      cwd: await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-")),
+      env: {},
+      stdin: { isTTY: true },
+      stdout: { write: (text) => output.push(text) },
+      stderr: { write: (text) => output.push(text) },
+      promptAdapter,
+      configureClients: true,
+      resolveExecutable: jest.fn().mockImplementation((name) => `/bin/${name}`),
+      runCommand,
+    });
+
+    expect(result).toBe(1);
+    expect(attempted).toContain("/bin/claude");
+    expect(attempted).toContain("/bin/codex");
+    expect(output.join(" ")).toMatch(/Claude Code.*failed/i);
+  });
+
+  test("redacts provider values in errors and quotes env paths in the plan", async () => {
+    const output = [];
+    const privateValue = ["provider", "value"].join("-");
+    const envFile = path.join(await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-")), "folder with spaces", "quote'and$path.env");
+    const promptAdapter = {
+      providers: jest.fn().mockResolvedValue([]),
+      client: jest.fn().mockResolvedValue(["codex"]),
+      confirmClient: jest.fn().mockResolvedValue(true),
+    };
+    const runCommand = jest.fn(async () => {
+      throw new Error(`failed with ${privateValue} and token=${privateValue}`);
+    });
+
+    const result = await setupCommand({
+      cwd: path.dirname(envFile),
+      env: { TICKET_ANALYZER_ENV_FILE: envFile, JIRA_API_TOKEN: privateValue },
+      stdin: { isTTY: true },
+      stdout: { write: (text) => output.push(text) },
+      stderr: { write: (text) => output.push(text) },
+      promptAdapter,
+      configureClients: true,
+      resolveExecutable: jest.fn().mockReturnValue("/bin/codex"),
+      runCommand,
+    });
+
+    const text = output.join(" ");
+    expect(result).toBe(1);
+    expect(text).toContain("quote'\\''and$path.env");
+    expect(runCommand).toHaveBeenCalledWith(
+      "/bin/codex",
+      ["mcp", "add", "ticket-analyzer", "--env", `TICKET_ANALYZER_ENV_FILE=${envFile}`, "--", "ticket-analyzer-mcp"],
+      expect.objectContaining({ shell: false }),
+    );
+    expect(text).not.toContain(privateValue);
+    expect(text).toContain("[redacted]");
+  });
+
+  test("runCommand derives a client-safe environment and uses safe spawn options", async () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const spawnProcess = jest.fn(() => {
+      queueMicrotask(() => child.emit("close", 0));
+      return child;
+    });
+    const cwd = "/workspace/project";
+
+    await runCommand("/bin/client", ["configure"], {
+      cwd,
+      clientEnv: {
+        PATH: "/safe/bin",
+        HOME: "/home/person",
+        USERPROFILE: "C:\\Users\\person",
+        TICKET_ANALYZER_ENV_FILE: "/workspace/project/.env",
+        TRELLO_API_KEY: "provider-key",
+        TRELLO_TOKEN: "provider-token",
+        JIRA_HOST: "jira.example.com",
+        JIRA_EMAIL: "person@example.com",
+        JIRA_API_TOKEN: "jira-token",
+        AZURE_DEVOPS_ORG: "org",
+        AZURE_DEVOPS_PROJECT: "project",
+        AZURE_DEVOPS_PAT: "azure-pat",
+        CUSTOM_SECRET: "secret",
+        ACCESS_TOKEN: "access-token",
+      },
+      spawnProcess,
+    });
+
+    expect(spawnProcess).toHaveBeenCalledWith(
+      "/bin/client",
+      ["configure"],
+      expect.objectContaining({
+        shell: false,
+        cwd,
+        env: { PATH: "/safe/bin", HOME: "/home/person", USERPROFILE: "C:\\Users\\person" },
+        stdio: ["ignore", "pipe", "pipe"],
+      }),
+    );
+  });
+
+  test("runCommand passes the Codex env-file path as an argument without child env leakage", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-"));
+    const envFile = path.join(cwd, "folder with spaces", "project.env");
+    const output = [];
+    const promptAdapter = {
+      providers: jest.fn().mockResolvedValue([]),
+      client: jest.fn().mockResolvedValue(["codex"]),
+      confirmClient: jest.fn().mockResolvedValue(true),
+    };
+    const spawnProcess = jest.fn(() => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      queueMicrotask(() => child.emit("close", 0));
+      return child;
+    });
+
+    const result = await setupCommand({
+      cwd,
+      env: {
+        TICKET_ANALYZER_ENV_FILE: envFile,
+        JIRA_API_TOKEN: "provider-token",
+        PATH: "/safe/bin",
+        HOME: "/home/person",
+      },
+      stdin: { isTTY: true },
+      stdout: { write: (text) => output.push(text) },
+      promptAdapter,
+      configureClients: true,
+      resolveExecutable: jest.fn().mockReturnValue("/safe/bin/codex"),
+      spawnProcess,
+    });
+
+    expect(result).toBe(0);
+    expect(spawnProcess).toHaveBeenCalledTimes(1);
+    expect(spawnProcess.mock.calls[0][1]).toEqual([
+      "mcp", "add", "ticket-analyzer", "--env", `TICKET_ANALYZER_ENV_FILE=${envFile}`, "--", "ticket-analyzer-mcp",
+    ]);
+    expect(spawnProcess.mock.calls[0][2].env).toEqual({ PATH: "/safe/bin", HOME: "/home/person" });
+    expect(output.join(" ")).not.toContain("provider-token");
+  });
+
+  test("runCommand times out safely and setup continues with later clients", async () => {
+    jest.useFakeTimers();
+    try {
+      const children = [];
+      let resolveStarted;
+      const started = new Promise((resolve) => {
+        resolveStarted = resolve;
+      });
+      const spawnProcess = jest.fn(() => {
+        const child = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.kill = jest.fn(() => true);
+        children.push(child);
+        if (children.length === 1) resolveStarted();
+        if (children.length > 1) queueMicrotask(() => child.emit("close", 0));
+        return child;
+      });
+      const output = [];
+      const promptAdapter = {
+        providers: jest.fn().mockResolvedValue([]),
+        client: jest.fn().mockResolvedValue(["claude", "codex"]),
+        confirmClient: jest.fn().mockResolvedValue(true),
+      };
+      const setupPromise = setupCommand({
+        cwd: await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-")),
+        env: {},
+        stdin: { isTTY: true },
+        stdout: { write: (text) => output.push(text) },
+        stderr: { write: (text) => output.push(text) },
+        promptAdapter,
+        configureClients: true,
+        timeoutMs: 25,
+        resolveExecutable: jest.fn().mockImplementation((name) => `/bin/${name}`),
+        spawnProcess,
+      });
+
+      await started;
+      await jest.advanceTimersByTimeAsync(25);
+      const result = await setupPromise;
+      expect(result).toBe(1);
+      expect(children[0].kill).toHaveBeenCalledTimes(1);
+      expect(spawnProcess).toHaveBeenCalledTimes(2);
+      expect(spawnProcess.mock.calls[1][1][0]).toBe("mcp");
+      expect(output.join(" ")).toMatch(/timed out after 25ms/i);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test("runCommand bounds captured stdout and stderr", async () => {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const spawnProcess = jest.fn(() => {
+      queueMicrotask(() => {
+        child.stdout.emit("data", Buffer.from("0123456789abcdefEXTRA"));
+        child.stderr.emit("data", Buffer.from("fedcba9876543210EXTRA"));
+        child.emit("close", 0);
+      });
+      return child;
+    });
+
+    const result = await runCommand("client", [], { maxOutputBytes: 16, spawnProcess });
+    expect(Buffer.byteLength(result.stdout)).toBe(16);
+    expect(Buffer.byteLength(result.stderr)).toBe(16);
+  });
+
+  test("resolveExecutable treats empty and relative PATH entries as cwd-relative", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-"));
+    const relativeDirectory = path.join(cwd, "relative-bin");
+    await mkdir(relativeDirectory);
+    await writeFile(path.join(cwd, "empty-client"), "#!/bin/sh\n");
+    await writeFile(path.join(relativeDirectory, "relative-client"), "#!/bin/sh\n");
+    await chmod(path.join(cwd, "empty-client"), 0o755);
+    await chmod(path.join(relativeDirectory, "relative-client"), 0o755);
+
+    expect(resolveExecutable("empty-client", { PATH: `${path.delimiter}${relativeDirectory}` }, cwd)).toBe(
+      path.join(cwd, "empty-client"),
+    );
+    expect(resolveExecutable("relative-client", { PATH: "relative-bin" }, cwd)).toBe(
+      path.join(relativeDirectory, "relative-client"),
+    );
+  });
+
+  test("resolveExecutable never accepts Windows cmd or bat shims", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-"));
+    const bin = path.join(cwd, "bin");
+    await mkdir(bin);
+    await writeFile(path.join(bin, "client.cmd"), "@echo off\r\n");
+    await writeFile(path.join(bin, "client.bat"), "@echo off\r\n");
+
+    expect(resolveExecutable("client", { PATH: bin, PATHEXT: ".CMD;.BAT" }, cwd, "win32")).toBeNull();
+  });
+
+  test("runCli rejects arguments for non-setup commands", async () => {
+    const output = [];
+    await expect(runCli(["status", "unexpected"], { stderr: { write: (text) => output.push(text) } })).resolves.toBe(1);
+    expect(output.join(" ")).toMatch(/invalid argument.*status.*unexpected/i);
   });
 });

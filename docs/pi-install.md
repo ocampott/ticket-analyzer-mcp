@@ -9,7 +9,7 @@ The published Pi package includes an extension that starts the MCP server and ex
 The setup, diagnostics, and standalone server CLI use one machine-wide npm version:
 
 ```bash
-npm install --global ticket-analyzer-mcp@2.2.2
+npm install --global ticket-analyzer-mcp@2.3.0
 ticket-analyzer-mcp setup
 ticket-analyzer-mcp status
 ticket-analyzer-mcp doctor
@@ -22,16 +22,25 @@ Update that central CLI version with:
 npm update --global ticket-analyzer-mcp
 ```
 
-For a central version pin, install an exact version such as `npm install --global ticket-analyzer-mcp@2.2.2`. The alternative `npm install ticket-analyzer-mcp@2.2.2` is isolated to one project and is not the recommended central policy.
+For a central version pin, install an exact version such as `npm install --global ticket-analyzer-mcp@2.3.0`. The alternative `npm install ticket-analyzer-mcp@2.3.0` is isolated to one project and is not the recommended central policy.
 
 Setup writes credentials to the project-local `.env`; it does not modify Pi settings, execute client commands, or print secrets. The server loads `TICKET_ANALYZER_ENV_FILE` when set, otherwise `<cwd>/.env`; real environment variables take precedence.
+
+To opt in to client configuration after the provider phase, run:
+
+```bash
+ticket-analyzer-mcp setup --configure-clients
+ticket-analyzer-mcp setup --configure-clients --dry-run
+```
+
+Normal mode detects available clients, prints one non-secret plan, and asks for one confirmation per selected available client. It executes only confirmed clients, using a limited environment without provider credentials. `--dry-run` prints the same plan without confirmations or child processes; it may write `.env` when providers are selected. The legacy `ticket-analyzer-mcp setup` remains credential-only. The wizard does not inspect, replace, or remove existing Pi registrations; update them manually when needed and restart or reload Pi after configuration or updates. On Windows, `shell: false` cannot use `.cmd` or `.bat` shims; a direct executable is required.
 
 ## Pi package
 
 Pi is managed by Pi, not by the npm global CLI. Install the published package with its exact aligned version:
 
 ```bash
-pi install -l npm:ticket-analyzer-mcp@2.2.2
+pi install -l npm:ticket-analyzer-mcp@2.3.0
 ```
 
 Update the Pi package separately, then restart or reload Pi:

@@ -7,7 +7,7 @@
 Install one machine-wide published version:
 
 ```bash
-npm install --global ticket-analyzer-mcp@2.2.2
+npm install --global ticket-analyzer-mcp@2.3.0
 ```
 
 From the target project, run the published setup wizard:
@@ -16,7 +16,16 @@ From the target project, run the published setup wizard:
 ticket-analyzer-mcp setup
 ```
 
-Choose the required providers, enter their credentials, then select **Codex** alone or with Claude Code and/or Pi. The wizard writes secrets only to the ignored project-local `.env` and prints a grouped, non-secret registration command:
+Choose the required providers, enter their credentials, then select **Codex** alone or with Claude Code and/or Pi. The legacy wizard writes secrets only to the ignored project-local `.env` and does not execute client CLIs. To opt in to client configuration, run:
+
+```bash
+ticket-analyzer-mcp setup --configure-clients
+ticket-analyzer-mcp setup --configure-clients --dry-run
+```
+
+Normal mode detects available clients, prints one non-secret plan, and asks for one confirmation per selected available client. It executes only confirmed clients, using a limited environment without provider credentials. `--dry-run` prints the same plan without confirmations or child processes; it may write `.env` when providers are selected. On Windows, `shell: false` cannot use `.cmd` or `.bat` shims; a direct executable is required.
+
+The generated Codex registration command is:
 
 ```bash
 codex mcp add ticket-analyzer \
@@ -24,9 +33,9 @@ codex mcp add ticket-analyzer \
   -- ticket-analyzer-mcp
 ```
 
-The command follows `codex mcp add <NAME> --env KEY=VALUE -- COMMAND...`; use `codex mcp remove ticket-analyzer` to remove the registration. Never put provider credentials in Codex configuration or shell history. Setup does not execute client CLIs or mutate client settings.
+The Codex command follows `codex mcp add <NAME> --env KEY=VALUE -- COMMAND...`; use `codex mcp remove ticket-analyzer` to remove a registration. Never put provider credentials in Codex configuration or shell history. The wizard does not inspect, replace, or remove existing registrations; update them manually when needed and restart Codex after configuration or updates.
 
-Restart Codex after registering the server or updating the package. Update the central version with `npm update --global ticket-analyzer-mcp`; an exact global install such as `npm install --global ticket-analyzer-mcp@2.2.2` pins it. The project-local alternative `npm install ticket-analyzer-mcp@2.2.2` is isolated to that project.
+Restart Codex after registering the server or updating the package. Update the central version with `npm update --global ticket-analyzer-mcp`; an exact global install such as `npm install --global ticket-analyzer-mcp@2.3.0` pins it. The project-local alternative `npm install ticket-analyzer-mcp@2.3.0` is isolated to that project.
 
 Do not replace the global command with a checkout, filesystem path, or direct Node entrypoint.
 

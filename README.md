@@ -11,7 +11,7 @@ Client-neutral MCP server for reading, searching, and analyzing Trello, Jira, an
 Desde cualquier proyecto consumidor, instalá una sola versión global para toda la máquina:
 
 ```bash
-npm install --global ticket-analyzer-mcp@2.2.2
+npm install --global ticket-analyzer-mcp@2.3.0
 ```
 
 Usá el wizard y los comandos publicados desde el proyecto que debe conservar las credenciales:
@@ -23,20 +23,33 @@ ticket-analyzer-mcp doctor
 ticket-analyzer-mcp
 ```
 
-`setup` guarda las credenciales en el `.env` ignorado del proyecto, conserva las claves existentes y no modifica la configuración del cliente. `status` es local y `doctor` puede consultar los proveedores. Para actualizar la versión central:
+`setup` guarda las credenciales en el `.env` ignorado del proyecto, conserva las claves existentes y no modifica la configuración del cliente. `status` es local y `doctor` puede consultar los proveedores.
+
+### Configuración opt-in de clientes
+
+Después de la fase de credenciales, configurá solo los clientes que elijas:
+
+```bash
+ticket-analyzer-mcp setup --configure-clients
+ticket-analyzer-mcp setup --configure-clients --dry-run
+```
+
+El modo normal detecta Claude Code, Codex y Pi en `PATH`, muestra un plan no secreto y pide una confirmación por cada cliente disponible seleccionado. Las CLI se ejecutan con un entorno limitado y sin credenciales de proveedores. `--dry-run` muestra el mismo plan, no pide confirmaciones ni ejecuta procesos de clientes; puede escribir `.env` si seleccionás proveedores. El `setup` legado no detecta ni configura clientes. El wizard no inspecciona, reemplaza ni elimina registros existentes: actualizá manualmente cuando corresponda y reiniciá el cliente después de configurar o actualizarlo.
+
+Para actualizar la versión central:
 
 ```bash
 npm update --global ticket-analyzer-mcp
 ```
 
-Para fijar otra versión central, reinstalala con una versión exacta, por ejemplo `npm install --global ticket-analyzer-mcp@2.2.2`.
+Para fijar otra versión central, reinstalala con una versión exacta, por ejemplo `npm install --global ticket-analyzer-mcp@2.3.0`.
 
 ### Comparación de alcance
 
 - Sin `--global`: versión aislada por proyecto.
 - Con `--global`: una versión central para toda la máquina.
 
-La alternativa aislada es instalar explícitamente en un proyecto: `npm install ticket-analyzer-mcp@2.2.2`. No es la instalación recomendada para usuarios que deben compartir una versión central.
+La alternativa aislada es instalar explícitamente en un proyecto: `npm install ticket-analyzer-mcp@2.3.0`. No es la instalación recomendada para usuarios que deben compartir una versión central.
 
 ### Clientes
 
@@ -60,7 +73,7 @@ codex mcp add ticket-analyzer \
 **Pi** — Pi administra su propio paquete publicado; no lo reemplaces con la instalación npm global:
 
 ```bash
-pi install -l npm:ticket-analyzer-mcp@2.2.2
+pi install -l npm:ticket-analyzer-mcp@2.3.0
 pi update npm:ticket-analyzer-mcp
 ```
 
@@ -79,7 +92,7 @@ Flujo recomendado: **analizá** el ticket y la evidencia → **pedí un plan** �
 Install one machine-wide version for all projects:
 
 ```bash
-npm install --global ticket-analyzer-mcp@2.2.2
+npm install --global ticket-analyzer-mcp@2.3.0
 ```
 
 Run setup and the published commands from the project that owns the credentials:
@@ -97,7 +110,7 @@ Update the central version with:
 npm update --global ticket-analyzer-mcp
 ```
 
-For a central version pin, install the exact version again, such as `npm install --global ticket-analyzer-mcp@2.2.2`. The project-local alternative is `npm install ticket-analyzer-mcp@2.2.2`; it affects only that project.
+For a central version pin, install the exact version again, such as `npm install --global ticket-analyzer-mcp@2.3.0`. The project-local alternative is `npm install ticket-analyzer-mcp@2.3.0`; it affects only that project.
 
 - Without --global: version isolated per project.
 - With --global: one central version for the whole machine.
@@ -113,10 +126,19 @@ codex mcp add ticket-analyzer \
 Pi remains a Pi-managed published package with an exact version when pinned:
 
 ```bash
-pi install -l npm:ticket-analyzer-mcp@2.2.2
+pi install -l npm:ticket-analyzer-mcp@2.3.0
 pi update npm:ticket-analyzer-mcp
 ```
 
-Claude Code continues to use the marketplace commands above. Keep provider credentials in the project `.env`; `TICKET_ANALYZER_ENV_FILE` may point to another file and real environment variables take precedence.
+### Opt-in client configuration wizard
+
+The wizard can detect available clients and configure only the selected clients after one confirmation per available client:
+
+```bash
+ticket-analyzer-mcp setup --configure-clients
+ticket-analyzer-mcp setup --configure-clients --dry-run
+```
+
+Normal mode detects available clients, prints a non-secret plan, and executes only confirmed commands. Client CLIs run with a limited environment and no provider credentials. `--dry-run` prints the same plan without confirmations or child processes; it may write `.env` when providers are selected. The legacy `ticket-analyzer-mcp setup` remains credential-only and never detects or configures clients. The wizard does not inspect, replace, or remove existing registrations; update them manually when needed and restart the client after configuration or updates. Claude Code continues to use the marketplace commands above. Keep provider credentials in the project `.env`; `TICKET_ANALYZER_ENV_FILE` may point to another file and real environment variables take precedence.
 
 See the detailed [agent workflow](docs/agent-workflow.md), [Codex](docs/codex-install.md), and [Pi](docs/pi-install.md) guides.

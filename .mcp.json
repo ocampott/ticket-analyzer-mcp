@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "pm": {
-      "command": "npx",
-      "args": ["-y", "ticket-analyzer-mcp@latest"]
+      "command": "ticket-analyzer-mcp",
+      "args": []
     }
   }
 }

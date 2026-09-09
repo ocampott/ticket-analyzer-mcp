@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.3.0] - 2026-09-09
+
+### Added
+
+- Added the opt-in client configuration wizard with `--configure-clients` and a non-executing `--dry-run` plan for Claude Code, Codex, and Pi.
+- Added safe command execution without a shell, with bounded output, limited child environments, and provider-credential redaction.
+- Added the global MCP manifest entry for the published `ticket-analyzer-mcp` binary.
+
+### Changed
+
+- Documented confirmation per available selected client, manual restart guidance, and the rule that existing registrations are never inspected, replaced, or removed.
+
 ## [2.2.2] - 2026-09-09
 
 ### Changed
