@@ -4,55 +4,43 @@ The published Pi package includes an extension that starts the MCP server and ex
 
 > **Security:** Pi packages run with full system access. Review this package's extension and skills before installing or enabling it.
 
-## Published package
+## Central npm CLI
 
-From the project whose credentials should be used, run the published npm setup wizard in a TTY:
-
-```bash
-npx -y ticket-analyzer-mcp@2.2.1 setup
-```
-
-Select Pi alone or with Claude Code and/or OpenAI Codex. Setup writes credentials to the project-local `.env`; it does not modify Pi settings, execute client commands, or print secrets.
-
-For a project-local install:
+The setup, diagnostics, and standalone server CLI use one machine-wide npm version:
 
 ```bash
-pi install -l npm:ticket-analyzer-mcp
+npm install --global ticket-analyzer-mcp@2.2.2
+ticket-analyzer-mcp setup
+ticket-analyzer-mcp status
+ticket-analyzer-mcp doctor
+ticket-analyzer-mcp
 ```
 
-For a user-global install:
+Update that central CLI version with:
 
 ```bash
-pi install npm:ticket-analyzer-mcp
+npm update --global ticket-analyzer-mcp
 ```
 
-Project-local scope installs the published npm package for the current project. The extension starts the no-argument MCP stdio server with the project working directory.
+For a central version pin, install an exact version such as `npm install --global ticket-analyzer-mcp@2.2.2`. The alternative `npm install ticket-analyzer-mcp@2.2.2` is isolated to one project and is not the recommended central policy.
 
-## Updates and version pins
+Setup writes credentials to the project-local `.env`; it does not modify Pi settings, execute client commands, or print secrets. The server loads `TICKET_ANALYZER_ENV_FILE` when set, otherwise `<cwd>/.env`; real environment variables take precedence.
 
-Update this package explicitly, then restart or reload Pi:
+## Pi package
+
+Pi is managed by Pi, not by the npm global CLI. Install the published package with its exact aligned version:
+
+```bash
+pi install -l npm:ticket-analyzer-mcp@2.2.2
+```
+
+Update the Pi package separately, then restart or reload Pi:
 
 ```bash
 pi update npm:ticket-analyzer-mcp
 ```
 
-`pi update` alone updates Pi itself, not this MCP package. An unpinned `npm:ticket-analyzer-mcp` spec is the normal updateable install. A reproducible pinned install uses the published package:
-
-```bash
-pi install -l npm:ticket-analyzer-mcp@2.2.1
-```
-
-After a later release, replace the version with the published npm version you want to use and run the install explicitly. Pinned specs are not moved by an unpinned package update.
-
-Restart or reload Pi after an update if the extension or skills are not visible.
-
-Do not install this package from a checkout or filesystem path. Pi installation and update commands must use the `npm:` package spec.
-
-## Environment behavior
-
-The server loads `TICKET_ANALYZER_ENV_FILE` when set, otherwise `<cwd>/.env`. Real environment variables take precedence. The extension forwards only the provider credential allowlist plus the non-secret `TICKET_ANALYZER_ENV_FILE` path; it never forwards the host environment wholesale.
-
-Use [`.env.example`](../.env.example) for placeholder names only. Do not put real credentials in `.pi/settings.json`, a committed shell script, or a session transcript.
+Pi installation and update commands must use the published `npm:` package spec. Do not install this package from a checkout or filesystem path.
 
 ## Provider fields
 
@@ -60,7 +48,7 @@ Use [`.env.example`](../.env.example) for placeholder names only. Do not put rea
 - Jira: `JIRA_HOST`, `JIRA_EMAIL`, `JIRA_API_TOKEN`
 - Azure DevOps: `AZURE_DEVOPS_ORG`, `AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_PAT`
 
-Azure DevOps needs `Work Items: Read`; `Work Items: Read & Write` is needed only for comments.
+Azure DevOps needs `Work Items: Read`; `Work Items: Read & Write` is needed only for comments. Do not put real credentials in `.pi/settings.json`, a committed shell script, or a session transcript.
 
 ## Use
 

@@ -5,7 +5,7 @@ import process from "node:process";
 import { checkbox, input as inquirerInput, password } from "@inquirer/prompts";
 import dotenv from "dotenv";
 
-const VERSION = "2.2.1";
+const VERSION = "2.2.2";
 const ENV_FILE_VARIABLE = "TICKET_ANALYZER_ENV_FILE";
 const PROVIDERS = {
   trello: ["TRELLO_API_KEY", "TRELLO_TOKEN"],
@@ -175,7 +175,7 @@ export async function setupCommand(options = {}) {
   const stdin = options.stdin ?? process.stdin;
   const stdout = options.stdout ?? process.stdout;
   if (!stdin.isTTY) {
-    writeOutput(stdout, "Setup requires an interactive terminal. Run `npx -y ticket-analyzer-mcp setup` from a TTY.");
+    writeOutput(stdout, "Setup requires an interactive terminal. Run `ticket-analyzer-mcp setup` from a TTY.");
     throw new Error("Setup requires an interactive terminal; refusing to read credentials from non-TTY stdin.");
   }
 
@@ -224,9 +224,9 @@ export async function setupCommand(options = {}) {
       for (const client of clients) {
         writeOutput(stdout, `${CLIENT_LABELS[client]}:`);
         if (client === "pi") {
-          writeOutput(stdout, "Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.2.1");
+          writeOutput(stdout, "Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.2.2");
         } else if (client === "codex") {
-          const serverCommand = "npx -y ticket-analyzer-mcp@2.2.1";
+          const serverCommand = "ticket-analyzer-mcp";
           writeOutput(stdout, `Next step for Codex: codex mcp add ticket-analyzer --env ${ENV_FILE_VARIABLE}=${shellQuote(filePath)} -- ${serverCommand}`);
         } else {
           writeOutput(stdout, "Next step for Claude Code: install or update ticket-analyzer@ticket-analyzer-mcp from the ticket-analyzer-mcp marketplace, then restart Claude Code.");
@@ -290,14 +290,14 @@ export async function doctorCommand(options = {}) {
 
 function helpText() {
   return [
-    "ticket-analyzer-mcp 2.2.1",
+    "ticket-analyzer-mcp 2.2.2",
     "",
     "Usage:",
-    "  npx -y ticket-analyzer-mcp              Start the MCP server over stdio",
-    "  npx -y ticket-analyzer-mcp setup        Configure selected providers in the project .env",
-    "  npx -y ticket-analyzer-mcp doctor       Diagnose Node, .env, provider, and connection status",
-    "  npx -y ticket-analyzer-mcp status       Check local provider configuration without network calls",
-    "  npx -y ticket-analyzer-mcp --help       Show this help",
+    "  ticket-analyzer-mcp              Start the MCP server over stdio",
+    "  ticket-analyzer-mcp setup        Configure selected providers in the project .env",
+    "  ticket-analyzer-mcp doctor       Diagnose Node, .env, provider, and connection status",
+    "  ticket-analyzer-mcp status       Check local provider configuration without network calls",
+    "  ticket-analyzer-mcp --help       Show this help",
   ].join("\n");
 }
 

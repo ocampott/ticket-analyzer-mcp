@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.2.2] - 2026-09-09
+
+### Changed
+
+- Made the machine-wide npm installation and update policy explicit: `npm install --global ticket-analyzer-mcp@2.2.2` installs the central version and `npm update --global ticket-analyzer-mcp` updates it.
+- Documented `npm install ticket-analyzer-mcp@2.2.2` as the project-local alternative, isolated from the central version.
+- Updated CLI, Codex, Pi, and active user documentation to use the global binary without checkout or local package paths.
+
 ## [2.2.1] - 2026-09-09
 
 ### Changed

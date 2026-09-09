@@ -16,6 +16,15 @@ describe("ticket-analyzer CLI", () => {
     expect(startServer).toHaveBeenCalledTimes(1);
   });
 
+  test("help uses the globally installed binary", async () => {
+    const output = [];
+    await runCli(["--help"], { stdout: { write: (text) => output.push(text) } });
+    const text = output.join(" ");
+    expect(text).toContain("ticket-analyzer-mcp 2.2.2");
+    expect(text).toContain("ticket-analyzer-mcp setup");
+    expect(text).not.toContain("npx");
+  });
+
   test("setup refuses non-interactive stdin before reading credentials", async () => {
     const output = [];
     await expect(
@@ -56,7 +65,7 @@ describe("ticket-analyzer CLI", () => {
     expect(promptAdapter.providers).toHaveBeenCalledTimes(1);
     expect(promptAdapter.client).toHaveBeenCalledTimes(1);
     const text = output.join(" ");
-    expect(text).toContain("Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.2.1");
+    expect(text).toContain("Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.2.2");
     expect(text).not.toMatch(/node .*ticket-analyzer-mcp.*pm-mcp\.js/);
     expect((await stat(path.join(cwd, ".env"))).mode & 0o777).toBe(0o600);
   });
@@ -149,7 +158,7 @@ describe("ticket-analyzer CLI", () => {
     });
 
     const text = output.join(" ");
-    expect(text).toContain("-- npx -y ticket-analyzer-mcp@2.2.1");
+    expect(text).toContain("-- ticket-analyzer-mcp");
     expect(text).not.toMatch(/node .*ticket-analyzer-mcp.*pm-mcp\.js/);
   });
 
@@ -172,7 +181,7 @@ describe("ticket-analyzer CLI", () => {
     });
 
     const text = output.join(" ");
-    expect(text).toContain("-- npx -y ticket-analyzer-mcp@2.2.1");
+    expect(text).toContain("-- ticket-analyzer-mcp");
     expect(text).not.toContain(path.join(packageRoot, "bin", "pm-mcp.js"));
   });
 
@@ -195,7 +204,7 @@ describe("ticket-analyzer CLI", () => {
     });
 
     const text = output.join(" ");
-    expect(text).toContain("Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.2.1");
+    expect(text).toContain("Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.2.2");
     expect(text).not.toContain(packageRoot);
   });
 

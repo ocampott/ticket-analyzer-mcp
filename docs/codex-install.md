@@ -2,29 +2,37 @@
 
 ## Requirements
 
-Use Node.js 18 or newer. The setup wizard requires a TTY and writes credentials only to the target project's ignored `.env`.
+Use Node.js 18 or newer. Setup requires a TTY and writes credentials only to the target project's ignored `.env`.
 
-## Published package
+## Central npm CLI
 
-From the project that should own the credentials, run the published npm package:
+Install one machine-wide package version:
 
 ```bash
-npx -y ticket-analyzer-mcp@2.2.1 setup
+npm install --global ticket-analyzer-mcp@2.2.2
 ```
 
-Select Codex alone or with Claude Code and/or Pi. Choose the required providers, enter their credentials, then follow the generated Codex command. Setup prints only the absolute `.env` path, never provider secrets, and does not execute client CLIs or change client settings.
+From the project that should own the credentials, run the published setup wizard:
 
-The registration shape is:
+```bash
+ticket-analyzer-mcp setup
+```
+
+Select Codex and the required providers. Setup prints only the absolute `.env` path, never provider secrets, and does not execute client CLIs or change client settings.
+
+Register the global server binary with Codex:
 
 ```bash
 codex mcp add ticket-analyzer \
   --env TICKET_ANALYZER_ENV_FILE=/absolute/path/to/project/.env \
-  -- npx -y ticket-analyzer-mcp@2.2.1
+  -- ticket-analyzer-mcp
 ```
 
-This uses only the non-secret `TICKET_ANALYZER_ENV_FILE` setting. `codex mcp remove ticket-analyzer` removes the registration when needed. Restart Codex after changing the registration or after updating the npm package.
+This uses only the non-secret `TICKET_ANALYZER_ENV_FILE` setting. `codex mcp remove ticket-analyzer` removes the registration when needed. Restart Codex after changing the registration or updating the package.
 
-The server command must remain the published `npx` command. Do not replace it with a checkout, filesystem path, or direct Node entrypoint.
+Update the central version with `npm update --global ticket-analyzer-mcp`. For a central pin, install an exact version such as `npm install --global ticket-analyzer-mcp@2.2.2`. The project-local alternative, `npm install ticket-analyzer-mcp@2.2.2`, is isolated to that project and is not the recommended central policy.
+
+Do not replace the global command with a checkout, filesystem package path, or direct Node entrypoint.
 
 ## Provider fields
 
@@ -32,7 +40,7 @@ The server command must remain the published `npx` command. Do not replace it wi
 - Jira: `JIRA_HOST`, `JIRA_EMAIL`, `JIRA_API_TOKEN`
 - Azure DevOps: `AZURE_DEVOPS_ORG`, `AZURE_DEVOPS_PROJECT`, `AZURE_DEVOPS_PAT`
 
-Before each provider prompt, setup explains the credential source and format. Azure DevOps needs `Work Items: Read`; `Work Items: Read & Write` is needed only for comments. Do not put provider secrets in `codex mcp add`, shell history, or Codex configuration.
+The server loads `TICKET_ANALYZER_ENV_FILE` when set, otherwise `<cwd>/.env`; real environment variables take precedence. Do not put provider secrets in Codex configuration or shell history.
 
 ## Merge the instructions
 
@@ -40,9 +48,13 @@ Merge [`integrations/codex/AGENTS.template.md`](../integrations/codex/AGENTS.tem
 
 ## Updates and diagnostics
 
-Restart Codex after updating the published npm package. Use the following commands for local-only status and provider connectivity checks:
+Restart Codex after updating the package. Use these commands from the project whose `.env` should be checked:
 
 ```bash
-npx -y ticket-analyzer-mcp@2.2.1 status
-npx -y ticket-analyzer-mcp@2.2.1 doctor
+npm update --global ticket-analyzer-mcp
+ticket-analyzer-mcp status
+ticket-analyzer-mcp doctor
+ticket-analyzer-mcp
 ```
+
+`status` is local-only. `doctor` may contact providers and reports connection errors without secrets. The no-argument command is the MCP stdio server.

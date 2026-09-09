@@ -2,19 +2,31 @@
 
 `ticket-analyzer-mcp` is a standard, client-neutral MCP server. The consuming agent explores the repository and interprets the ticket; the server provides provider data and deterministic structured evidence.
 
-## Secure setup
+## Secure setup and central distribution
 
-From the project that should own credentials, run the published npm setup wizard:
+Install one machine-wide published CLI version:
 
 ```bash
-npx -y ticket-analyzer-mcp@2.2.1 setup
+npm install --global ticket-analyzer-mcp@2.2.2
 ```
 
-Choose the providers and clients interactively. Setup writes selected credentials to the ignored project-local `.env`, preserves unrelated keys, and never modifies client configuration or prints secrets. The compatibility Claude setup skill points to this published command rather than passing secrets to `claude mcp add`.
+From the project that should own credentials, run:
 
-Users install and update the distributed package only through npm/npx. Setup and client adapters never use a checkout or filesystem package path.
+```bash
+ticket-analyzer-mcp setup
+```
 
-The command with no subcommand is not setup: it starts the MCP server over stdio for a client. `doctor` checks Node, `.env`, provider completeness, and live connections. `status` checks only local configuration completeness and never calls a provider.
+Setup writes selected credentials to the ignored project-local `.env`, preserves unrelated keys, and never modifies client configuration or prints secrets. Users update the central version with `npm update --global ticket-analyzer-mcp`; reinstall an exact global version to pin it. The alternative `npm install ticket-analyzer-mcp@2.2.2` is isolated to one project.
+
+Use the direct binary for the standalone server and diagnostics:
+
+```bash
+ticket-analyzer-mcp
+ticket-analyzer-mcp status
+ticket-analyzer-mcp doctor
+```
+
+Setup and client adapters never use a checkout or filesystem package path. The no-argument command starts the MCP server over stdio. `doctor` checks Node, `.env`, provider completeness, and live connections. `status` checks only local configuration completeness and never calls a provider.
 
 ## Environment behavior
 
@@ -30,10 +42,8 @@ The server loads the path in `TICKET_ANALYZER_ENV_FILE`, or `<cwd>/.env` when un
 6. A CACHE WRITE requires explicit bounded cache-only consent for only `.claude/project-context.md` and/or `.claude/patterns.md`, after verifying those paths are ignored; it authorizes no application changes, migrations, comments, or `.gitignore` edits. Analyze permission and cache-write consent are distinct. Cache only verified, reusable repository patterns with exact repository-relative source paths and symbols, actual revision/date, dirty or unknown status, applicability, and limits; never persist raw ticket descriptions, comments, or attachments, credentials or secrets, sensitive ticket or person identifiers, or private external context; never fabricate source references or revisions, and never promote guesses to facts.
 7. Wait for explicit implementation confirmation before editing code or posting ticket comments.
 
-The complete necessary change is the goal, not a minimized file count or diff. A reusable pattern record includes its name, exact repo-relative paths and symbols, verified date and actual revision, dirty/unknown marker, applicability, and limits. Never fabricate records or treat unavailable code as proof.
+The complete necessary change is the goal, not a minimized file count or diff. Natural-language requests are the primary interface. Client slash commands, where available, are compatibility aliases and are not the only route to this workflow.
 
 ### Synthetic inspection example
 
-A ticket requests hiding an action bar action for a role. If exact source inspection proves the UI check exists but the corresponding backend endpoint lacks enforcement, the necessary plan includes both Frontend and Backend. If the endpoint already enforces the role, record that as already exists and limit the necessary delta to the UI; if the endpoint cannot be inspected, label the backend inference repository-unverified rather than assuming frontend-only or inventing a blocker. This example is guidance for evidence mapping, not an analyzer heuristic.
-
-Natural-language requests are the primary interface. Client slash commands, where available, are compatibility aliases and are not the only route to this workflow.
+A ticket requests hiding an action bar action for a role. If exact source inspection proves the UI check exists but the corresponding backend endpoint lacks enforcement, the necessary plan includes both Frontend and Backend. If the endpoint already enforces the role, record that as already exists and limit the necessary delta to the UI; if the endpoint cannot be inspected, label the backend inference repository-unverified rather than assuming frontend-only or inventing a blocker. This example is guidance for an analyzer, not a heuristic.
