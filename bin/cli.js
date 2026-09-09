@@ -2,11 +2,10 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath } from "node:url";
 import { checkbox, input as inquirerInput, password } from "@inquirer/prompts";
 import dotenv from "dotenv";
 
-const VERSION = "2.2.0";
+const VERSION = "2.2.1";
 const ENV_FILE_VARIABLE = "TICKET_ANALYZER_ENV_FILE";
 const PROVIDERS = {
   trello: ["TRELLO_API_KEY", "TRELLO_TOKEN"],
@@ -30,12 +29,6 @@ const SECRET_KEYS = new Set([
   "AZURE_DEVOPS_PAT",
 ]);
 
-export function resolvePackageRoot(moduleUrl = import.meta.url) {
-  return path.resolve(path.dirname(fileURLToPath(moduleUrl)), "..");
-}
-
-const PACKAGE_ROOT = resolvePackageRoot();
-
 export function resolveEnvFilePath(cwd = process.cwd(), env = process.env) {
   const configured = typeof env[ENV_FILE_VARIABLE] === "string" ? env[ENV_FILE_VARIABLE].trim() : "";
   return path.resolve(cwd, configured || ".env");
@@ -51,15 +44,6 @@ function nonEmpty(value) {
 
 function shellQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-function commandArgument(value) {
-  return /^[A-Za-z0-9_./:@%+=,-]+$/.test(value) ? value : shellQuote(value);
-}
-
-function isPublishedPackageRoot(packageRoot) {
-  const normalized = path.resolve(packageRoot);
-  return path.basename(normalized) === "ticket-analyzer-mcp" && path.basename(path.dirname(normalized)) === "node_modules";
 }
 
 function formatEnvValue(value) {
@@ -197,7 +181,6 @@ export async function setupCommand(options = {}) {
 
   const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
-  const packageRoot = path.resolve(options.packageRoot ?? PACKAGE_ROOT);
   const filePath = resolveEnvFilePath(cwd, env);
   const existing = await readExistingEnv(filePath);
   const promptAdapter = options.promptAdapter ?? createPromptAdapter(stdin, stdout);
@@ -241,16 +224,9 @@ export async function setupCommand(options = {}) {
       for (const client of clients) {
         writeOutput(stdout, `${CLIENT_LABELS[client]}:`);
         if (client === "pi") {
-          if (isPublishedPackageRoot(packageRoot)) {
-            writeOutput(stdout, "Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.2.0");
-          } else {
-            writeOutput(stdout, `Next step for Pi: pi install -l ${commandArgument(packageRoot)}`);
-            writeOutput(stdout, "If Pi already lists this path, reload Pi instead.");
-          }
+          writeOutput(stdout, "Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.2.1");
         } else if (client === "codex") {
-          const serverCommand = isPublishedPackageRoot(packageRoot)
-            ? "npx -y ticket-analyzer-mcp@2.2.0"
-            : `node ${commandArgument(path.join(packageRoot, "bin", "pm-mcp.js"))}`;
+          const serverCommand = "npx -y ticket-analyzer-mcp@2.2.1";
           writeOutput(stdout, `Next step for Codex: codex mcp add ticket-analyzer --env ${ENV_FILE_VARIABLE}=${shellQuote(filePath)} -- ${serverCommand}`);
         } else {
           writeOutput(stdout, "Next step for Claude Code: install or update ticket-analyzer@ticket-analyzer-mcp from the ticket-analyzer-mcp marketplace, then restart Claude Code.");
@@ -314,7 +290,7 @@ export async function doctorCommand(options = {}) {
 
 function helpText() {
   return [
-    "ticket-analyzer-mcp 2.2.0",
+    "ticket-analyzer-mcp 2.2.1",
     "",
     "Usage:",
     "  npx -y ticket-analyzer-mcp              Start the MCP server over stdio",

@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.2.1] - 2026-09-09
+
+### Changed
+
+- Enforced npm/npx-only distribution for user setup, update, server, and diagnostic commands.
+- Updated the CLI to emit published npm commands only and never emit checkout or filesystem package paths.
+- Aligned package, MCP server, Pi extension, Claude plugin, and marketplace metadata at `2.2.1`.
+
+This patch prepares the npm distribution policy; provider end-to-end behavior was not claimed or validated here.
+
 ## [2.2.0] - 2026-09-09
 
 ### Added

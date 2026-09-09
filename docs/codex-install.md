@@ -6,10 +6,10 @@ Use Node.js 18 or newer. The setup wizard requires a TTY and writes credentials 
 
 ## Published package
 
-From the project that should own the credentials, run:
+From the project that should own the credentials, run the published npm package:
 
 ```bash
-npx -y ticket-analyzer-mcp@latest setup
+npx -y ticket-analyzer-mcp@2.2.1 setup
 ```
 
 Select Codex alone or with Claude Code and/or Pi. Choose the required providers, enter their credentials, then follow the generated Codex command. Setup prints only the absolute `.env` path, never provider secrets, and does not execute client CLIs or change client settings.
@@ -19,26 +19,12 @@ The registration shape is:
 ```bash
 codex mcp add ticket-analyzer \
   --env TICKET_ANALYZER_ENV_FILE=/absolute/path/to/project/.env \
-  -- npx -y ticket-analyzer-mcp@latest
+  -- npx -y ticket-analyzer-mcp@2.2.1
 ```
 
-This uses only the non-secret `TICKET_ANALYZER_ENV_FILE` setting. `codex mcp remove ticket-analyzer` removes the registration when needed. Restart Codex after changing the registration or after updating the package.
+This uses only the non-secret `TICKET_ANALYZER_ENV_FILE` setting. `codex mcp remove ticket-analyzer` removes the registration when needed. Restart Codex after changing the registration or after updating the npm package.
 
-`@latest` resolves the current npm package when a new MCP process starts. Keep this registration for normal updates; do not invent a Codex configuration-update command or rerun setup just to change the package version. Pin an explicit npm version only when reproducibility is intentional.
-
-## Local checkout
-
-For local development, build the checkout before setup:
-
-```bash
-cd /absolute/path/to/ticket-analyzer-mcp
-npm install
-npm run build
-cd /absolute/path/to/your-project
-node /absolute/path/to/ticket-analyzer-mcp/bin/pm-mcp.js setup
-```
-
-When setup runs from a checkout, it detects the local package root and prints a local Codex command using `node /absolute/path/to/ticket-analyzer-mcp/bin/pm-mcp.js`. Rebuild after source changes and restart Codex. A package under `node_modules` is detected as published-package mode and prints the pinned `2.2.0` npm guidance instead.
+The server command must remain the published `npx` command. Do not replace it with a checkout, filesystem path, or direct Node entrypoint.
 
 ## Provider fields
 
@@ -52,11 +38,11 @@ Before each provider prompt, setup explains the credential source and format. Az
 
 Merge [`integrations/codex/AGENTS.template.md`](../integrations/codex/AGENTS.template.md) into the target project's existing `AGENTS.md`; preserve local instructions and headings. Do not overwrite local guidance.
 
-## Diagnostics
+## Updates and diagnostics
 
-The no-argument command starts the MCP server over stdio. `status` performs local-only checks; `doctor` also checks provider connections:
+Restart Codex after updating the published npm package. Use the following commands for local-only status and provider connectivity checks:
 
 ```bash
-npx -y ticket-analyzer-mcp@latest status
-npx -y ticket-analyzer-mcp@latest doctor
+npx -y ticket-analyzer-mcp@2.2.1 status
+npx -y ticket-analyzer-mcp@2.2.1 doctor
 ```

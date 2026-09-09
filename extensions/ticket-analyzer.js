@@ -161,7 +161,7 @@ export default function ticketAnalyzerExtension(pi) {
         stderr: "inherit",
       });
       const nextClient = new Client(
-        { name: "ticket-analyzer-pi", version: "2.2.0" },
+        { name: "ticket-analyzer-pi", version: "2.2.1" },
         { capabilities: {} },
       );
       transport = nextTransport;

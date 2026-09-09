@@ -2,7 +2,6 @@ import { jest } from "@jest/globals";
 import { mkdtemp, readFile, writeFile, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   doctorCommand,
   runCli,
@@ -57,10 +56,8 @@ describe("ticket-analyzer CLI", () => {
     expect(promptAdapter.providers).toHaveBeenCalledTimes(1);
     expect(promptAdapter.client).toHaveBeenCalledTimes(1);
     const text = output.join(" ");
-    const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-    expect(text).toContain(`Next step for Pi: pi install -l ${packageRoot}`);
-    expect(text).toMatch(/If Pi already lists this path, reload Pi instead/i);
-    expect(text).not.toContain("npm:ticket-analyzer-mcp@2.2.0");
+    expect(text).toContain("Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.2.1");
+    expect(text).not.toMatch(/node .*ticket-analyzer-mcp.*pm-mcp\.js/);
     expect((await stat(path.join(cwd, ".env"))).mode & 0o777).toBe(0o600);
   });
 
@@ -133,7 +130,7 @@ describe("ticket-analyzer CLI", () => {
         expect(text).not.toContain("azure-secret-pat");
       });
 
-      test("setup uses the local source for Codex registration", async () => {
+      test("setup always uses the published npm package for Codex registration", async () => {
     const cwd = await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-"));
     const packageRoot = path.resolve(cwd, "ticket-analyzer-mcp-checkout");
     const output = [];
@@ -152,11 +149,11 @@ describe("ticket-analyzer CLI", () => {
     });
 
     const text = output.join(" ");
-    expect(text).toContain(`-- node ${path.join(packageRoot, "bin", "pm-mcp.js")}`);
-    expect(text).not.toContain("npx -y ticket-analyzer-mcp@2.2.0");
+    expect(text).toContain("-- npx -y ticket-analyzer-mcp@2.2.1");
+    expect(text).not.toMatch(/node .*ticket-analyzer-mcp.*pm-mcp\.js/);
   });
 
-  test("setup keeps npm guidance for a package installed under node_modules", async () => {
+  test("setup keeps published npm guidance for Codex", async () => {
     const cwd = await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-"));
     const packageRoot = path.join(cwd, "node_modules", "ticket-analyzer-mcp");
     const output = [];
@@ -175,11 +172,11 @@ describe("ticket-analyzer CLI", () => {
     });
 
     const text = output.join(" ");
-    expect(text).toContain("-- npx -y ticket-analyzer-mcp@2.2.0");
+    expect(text).toContain("-- npx -y ticket-analyzer-mcp@2.2.1");
     expect(text).not.toContain(path.join(packageRoot, "bin", "pm-mcp.js"));
   });
 
-  test("setup keeps npm guidance for Pi from a package installed under node_modules", async () => {
+  test("setup keeps published npm guidance for Pi", async () => {
     const cwd = await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-"));
     const packageRoot = path.join(cwd, "node_modules", "ticket-analyzer-mcp");
     const output = [];
@@ -198,7 +195,7 @@ describe("ticket-analyzer CLI", () => {
     });
 
     const text = output.join(" ");
-    expect(text).toContain("Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.2.0");
+    expect(text).toContain("Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.2.1");
     expect(text).not.toContain(packageRoot);
   });
 

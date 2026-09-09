@@ -10,7 +10,7 @@
     {
       "name": "ticket-analyzer",
       "description": "Analyze and search Trello cards, Jira issues and Azure DevOps work items from natural-language requests in Claude Code",
-      "version": "2.2.0",
+      "version": "2.2.1",
       "source": "./"
     }
   ]

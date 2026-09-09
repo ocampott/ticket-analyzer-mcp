@@ -4,13 +4,15 @@
 
 ## Secure setup
 
-From the project that should own credentials:
+From the project that should own credentials, run the published npm setup wizard:
 
 ```bash
-npx -y ticket-analyzer-mcp@latest setup
+npx -y ticket-analyzer-mcp@2.2.1 setup
 ```
 
-Before the release is published, run `node /absolute/path/to/ticket-analyzer-mcp/bin/pm-mcp.js setup` from the local checkout instead. Choose the providers and clients interactively. Setup writes selected credentials to the ignored project-local `.env`, preserves unrelated keys, and never modifies client configuration or prints secrets. The compatibility Claude setup skill points to this command rather than passing secrets to `claude mcp add`.
+Choose the providers and clients interactively. Setup writes selected credentials to the ignored project-local `.env`, preserves unrelated keys, and never modifies client configuration or prints secrets. The compatibility Claude setup skill points to this published command rather than passing secrets to `claude mcp add`.
+
+Users install and update the distributed package only through npm/npx. Setup and client adapters never use a checkout or filesystem package path.
 
 The command with no subcommand is not setup: it starts the MCP server over stdio for a client. `doctor` checks Node, `.env`, provider completeness, and live connections. `status` checks only local configuration completeness and never calls a provider.
 

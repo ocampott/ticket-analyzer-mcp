@@ -1,18 +1,18 @@
 # Install with Pi
 
-The Pi package includes an extension that starts the bundled MCP server directly with Node and exposes the server's discovered tools to Pi.
+The published Pi package includes an extension that starts the MCP server and exposes the server's discovered tools to Pi.
 
 > **Security:** Pi packages run with full system access. Review this package's extension and skills before installing or enabling it.
 
 ## Published package
 
-From the project whose credentials should be used, run setup in a TTY:
+From the project whose credentials should be used, run the published npm setup wizard in a TTY:
 
 ```bash
-npx -y ticket-analyzer-mcp@latest setup
+npx -y ticket-analyzer-mcp@2.2.1 setup
 ```
 
-Select Pi alone or with Claude Code and/or OpenAI Codex, then use the exact package path printed by the wizard. Setup writes credentials to the project-local `.env`; it does not modify Pi settings, execute client commands, or print secrets.
+Select Pi alone or with Claude Code and/or OpenAI Codex. Setup writes credentials to the project-local `.env`; it does not modify Pi settings, execute client commands, or print secrets.
 
 For a project-local install:
 
@@ -26,45 +26,27 @@ For a user-global install:
 pi install npm:ticket-analyzer-mcp
 ```
 
-Project-local packages load after the project is trusted. The extension starts the no-argument MCP stdio server with the project working directory.
+Project-local scope installs the published npm package for the current project. The extension starts the no-argument MCP stdio server with the project working directory.
 
 ## Updates and version pins
 
-Update this package explicitly:
+Update this package explicitly, then restart or reload Pi:
 
 ```bash
 pi update npm:ticket-analyzer-mcp
 ```
 
-`pi update` alone updates Pi itself, not this MCP package. An unpinned `npm:ticket-analyzer-mcp` spec is the normal updateable install. A pinned spec such as `npm:ticket-analyzer-mcp@2.2.0` is skipped by package updates; move it with an explicit install of the new version:
+`pi update` alone updates Pi itself, not this MCP package. An unpinned `npm:ticket-analyzer-mcp` spec is the normal updateable install. A reproducible pinned install uses the published package:
 
 ```bash
-pi install -l npm:ticket-analyzer-mcp@2.2.0
+pi install -l npm:ticket-analyzer-mcp@2.2.1
 ```
 
-For a later release, replace the version in the generated command and run it explicitly:
-
-```bash
-pi install -l npm:ticket-analyzer-mcp@NEW_VERSION
-```
-
-Replace `NEW_VERSION` with the release you want to use.
+After a later release, replace the version with the published npm version you want to use and run the install explicitly. Pinned specs are not moved by an unpinned package update.
 
 Restart or reload Pi after an update if the extension or skills are not visible.
 
-## Local checkout
-
-Build the checkout before registering its local package path:
-
-```bash
-cd /absolute/path/to/ticket-analyzer-mcp
-npm install
-npm run build
-cd /absolute/path/to/your-project
-pi install -l /absolute/path/to/ticket-analyzer-mcp
-```
-
-A local path is loaded without copying. Rebuild after source changes and reload Pi; `pi update npm:ticket-analyzer-mcp` does not update a local checkout. If Pi already lists the path printed by local setup, reload Pi instead of adding it again.
+Do not install this package from a checkout or filesystem path. Pi installation and update commands must use the `npm:` package spec.
 
 ## Environment behavior
 
