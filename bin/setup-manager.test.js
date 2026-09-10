@@ -1,5 +1,6 @@
 import { describe, expect, jest, test } from "@jest/globals";
 import path from "node:path";
+import { readFile } from "node:fs/promises";
 import {
   PROVIDER_ENV_VARS,
   editProviderEnv,
@@ -18,6 +19,13 @@ import {
   inspectSidecarIgnoreRule,
   planSidecarIgnoreRule,
   inspectSidecarIgnoreRuleFile,
+  CODEX_RELATIVE_CONFIG_PATH,
+  CODEX_TARGET_TABLE,
+  CODEX_TRUST_PRECONDITION,
+  CODEX_REPLACEMENT_LOSS_WARNING,
+  acknowledgeCodexTrust,
+  locateCodexEntry,
+  planCodexEntry,
 } from "./setup-files.js";
 import {
   buildPlan,
@@ -425,6 +433,194 @@ describe("setup manager PR 1 guardrails", () => {
           expect(calls[1].options).toEqual(expect.objectContaining({ shell: false, cwd: root, maxOutputBytes: 16 * 1024, timeoutMs: 60_000, clientEnv: { PATH: "/safe" } }));
           expect(JSON.stringify(calls)).not.toContain("child-secret");
         });
+  });
+
+  describe("PR 5 Codex project TOML safety", () => {
+    const envFile = "/repo/.env";
+    const managed = [
+      "[mcp_servers.ticket-analyzer]",
+      'command = "ticket-analyzer-mcp"',
+      "args = []",
+      "",
+      "[mcp_servers.ticket-analyzer.env]",
+      `TICKET_ANALYZER_ENV_FILE = "${envFile}"`,
+    ].join("\n");
+
+    test("appends the exact canonical fragment to a missing or empty config", () => {
+      const created = planCodexEntry({ content: "", envFile, intent: "add" });
+      expect(created).toMatchObject({ safe: true, action: "add" });
+      expect(created.after).toBe(`${managed}\n`);
+      expect(created.diff).toContain(`+TICKET_ANALYZER_ENV_FILE = "${envFile}"`);
+    });
+
+    test("appends to an existing config without touching any foreign byte", () => {
+      const before = ['# keep me', '[mcp_servers.other]', 'command = "other"', ""].join("\n");
+      const planned = planCodexEntry({ content: before, envFile, intent: "add" });
+      expect(planned).toMatchObject({ safe: true, action: "add" });
+      expect(planned.after.startsWith(before)).toBe(true);
+      expect(planned.after).toContain(managed);
+    });
+
+    test("preserves the CRLF convention when appending", () => {
+      const before = "[mcp_servers.other]\r\ncommand = \"other\"\r\n";
+      const planned = planCodexEntry({ content: before, envFile, intent: "add" });
+      expect(planned.after.startsWith(before)).toBe(true);
+      expect(planned.after.slice(before.length)).toBe(`${managed.replaceAll("\n", "\r\n")}\r\n`);
+      expect(planned.after).not.toMatch(/[^\r]\n/);
+    });
+
+    test("updates only the target range and preserves surrounding comments and tables", () => {
+      const before = [
+        "# leading comment",
+        "[mcp_servers.other]",
+        'command = "other"',
+        "",
+        "[mcp_servers.ticket-analyzer]",
+        'command = "stale"',
+        "args = []",
+        "",
+        "[mcp_servers.ticket-analyzer.env]",
+        'TICKET_ANALYZER_ENV_FILE = "/old/.env"',
+        "",
+        "# trailing comment",
+        "[mcp_servers.zzz]",
+        'command = "zzz"',
+        "",
+      ].join("\n");
+      const planned = planCodexEntry({ content: before, envFile, intent: "replace" });
+      expect(planned).toMatchObject({ safe: true, action: "replace" });
+      expect(planned.after).toContain("# leading comment");
+      expect(planned.after).toContain("# trailing comment");
+      expect(planned.after).toContain('[mcp_servers.zzz]');
+      expect(planned.after).toContain(`TICKET_ANALYZER_ENV_FILE = "${envFile}"`);
+      expect(planned.after).not.toContain('"/old/.env"');
+      expect(planned.after).not.toContain('command = "stale"');
+      expect(planned.replacementLossWarning).toMatch(/within the targeted entry/i);
+    });
+
+    test("removes the target table and its env subtable only", () => {
+      const before = `# top\n\n${managed}\n\n[mcp_servers.other]\ncommand = "other"\n`;
+      const planned = planCodexEntry({ content: before, envFile, intent: "remove" });
+      expect(planned).toMatchObject({ safe: true, action: "remove" });
+      expect(planned.after).toContain("# top");
+      expect(planned.after).toContain("[mcp_servers.other]");
+      expect(planned.after).not.toContain("ticket-analyzer");
+    });
+
+    test("reports an unchanged plan when the target already matches", () => {
+      const planned = planCodexEntry({ content: `${managed}\n`, envFile, intent: "add" });
+      expect(planned).toMatchObject({ safe: true, changed: false });
+      expect(planned.diff).toBe("");
+    });
+
+    test("locates the target and reports its observed canonical facts", () => {
+      const located = locateCodexEntry(`${managed}\n`);
+      expect(located).toMatchObject({
+        safe: true,
+        present: true,
+        observed: { configPath: CODEX_RELATIVE_CONFIG_PATH, table: CODEX_TARGET_TABLE, command: "ticket-analyzer-mcp", envFile },
+      });
+    });
+
+    test.each([
+      ["duplicate target tables", `${managed}\n\n${managed}\n`],
+      ["an array of tables", '[[mcp_servers.ticket-analyzer]]\ncommand = "x"\n'],
+      ["a malformed header", '[mcp_servers.ticket-analyzer\ncommand = "x"\n'],
+      ["an unterminated quoted value", '[mcp_servers.ticket-analyzer]\ncommand = "x\n'],
+      ["a multiline value", '[mcp_servers.ticket-analyzer]\ncommand = """\nx\n"""\n'],
+      ["an unrecognized key layout", "[mcp_servers.ticket-analyzer]\nnot a key value line\n"],
+    ])("safely exits on %s without proposing a mutation", (_case, content) => {
+      expect(locateCodexEntry(content)).toMatchObject({ safe: false, reason: expect.any(String) });
+      const planned = planCodexEntry({ content, envFile, intent: "replace" });
+      expect(planned.safe).toBe(false);
+      expect(planned.after).toBeUndefined();
+    });
+
+    test("blocks a Codex mutation until the per-run trust precondition is acknowledged", () => {
+      const blocked = acknowledgeCodexTrust({ acknowledged: false });
+      expect(blocked).toMatchObject({ acknowledged: false, blocked: true });
+      expect(blocked.reason).toMatch(/trust/i);
+      expect(blocked.recovery).toBe(CODEX_TRUST_PRECONDITION);
+      expect(acknowledgeCodexTrust({ acknowledged: true })).toEqual({ acknowledged: true, blocked: false });
+    });
+
+    test("keeps the acknowledgement out of persisted ownership state", () => {
+      const state = buildOwnershipState("/repo", {
+        codex: { configPath: CODEX_RELATIVE_CONFIG_PATH, table: CODEX_TARGET_TABLE, command: "ticket-analyzer-mcp", envFile },
+      });
+      expect(serializeOwnershipState(state)).not.toMatch(/acknowledg|trust/i);
+    });
+
+    test("keeps comments and unrelated keys inside the target out of a pure env-file update", () => {
+      const before = [
+        "[mcp_servers.ticket-analyzer]",
+        '# managed by setup',
+        'command = "ticket-analyzer-mcp"',
+        "args = []",
+        'startup_timeout_ms = 20000',
+        "",
+        "[mcp_servers.ticket-analyzer.env]",
+        'TICKET_ANALYZER_ENV_FILE = "/old/.env"',
+        "",
+      ].join("\n");
+      const planned = planCodexEntry({ content: before, envFile, intent: "replace" });
+      expect(planned).toMatchObject({ safe: true, action: "replace", changed: true });
+      expect(planned.replacementLossWarning).toBe(CODEX_REPLACEMENT_LOSS_WARNING);
+      expect(planned.after).not.toContain("startup_timeout_ms");
+      expect(planned.after).not.toContain("# managed by setup");
+      expect(planned.observed).toMatchObject({ command: "ticket-analyzer-mcp", envFile: "/old/.env" });
+    });
+
+    test("rejects a non-contiguous env subtable instead of guessing its boundary", () => {
+      const before = [
+        "[mcp_servers.ticket-analyzer]",
+        'command = "ticket-analyzer-mcp"',
+        "",
+        "[mcp_servers.other]",
+        'command = "other"',
+        "",
+        "[mcp_servers.ticket-analyzer.env]",
+        `TICKET_ANALYZER_ENV_FILE = "${envFile}"`,
+        "",
+      ].join("\n");
+      expect(locateCodexEntry(before)).toMatchObject({ safe: false, reason: expect.stringMatching(/contiguous/i) });
+    });
+
+    test("rejects an env subtable that has no target table", () => {
+      expect(locateCodexEntry(`[mcp_servers.ticket-analyzer.env]\nTICKET_ANALYZER_ENV_FILE = "${envFile}"\n`)).toMatchObject({ safe: false });
+    });
+
+    test("removal preserves foreign bytes and reports an unchanged plan when absent", () => {
+      const absent = planCodexEntry({ content: '[mcp_servers.other]\ncommand = "other"\n', envFile, intent: "remove" });
+      expect(absent).toMatchObject({ safe: true, action: "remove", changed: false, diff: "" });
+      const present = planCodexEntry({ content: `${managed}\n\n[mcp_servers.other]\ncommand = "other"\n`, envFile, intent: "remove" });
+      expect(present.after).toBe('[mcp_servers.other]\ncommand = "other"\n');
+    });
+
+    test("requires an absolute managed env-file path", () => {
+      expect(planCodexEntry({ content: "", envFile: ".env", intent: "add" })).toMatchObject({ safe: false, reason: expect.stringMatching(/absolute/i) });
+    });
+
+    test("preserves a file that has no final newline", () => {
+      const before = '[mcp_servers.other]\ncommand = "other"';
+      const planned = planCodexEntry({ content: before, envFile, intent: "add" });
+      expect(planned.after).toBe(`${before}\n${managed}\n`);
+    });
+
+    test("renders an exact unified diff for a tracked config", () => {
+      const planned = planCodexEntry({ content: `# tracked\n\n${managed.replace(envFile, "/old/.env")}\n`, envFile, intent: "replace" });
+      expect(planned.diff).toContain(`--- ${CODEX_RELATIVE_CONFIG_PATH}`);
+      expect(planned.diff).toContain(`+++ ${CODEX_RELATIVE_CONFIG_PATH}`);
+      expect(planned.diff).toContain(' # tracked');
+      expect(planned.diff).toContain('-TICKET_ANALYZER_ENV_FILE = "/old/.env"');
+      expect(planned.diff).toContain(`+TICKET_ANALYZER_ENV_FILE = "${envFile}"`);
+    });
+
+    test("never reads home, CODEX_HOME, trust state, or a Codex subprocess", async () => {
+      const source = String(await readFile(new URL("./setup-files.js", import.meta.url), "utf8"));
+      expect(source).not.toMatch(/CODEX_HOME|process\.env\.HOME|homedir|os\.homedir/);
+      expect(source).not.toMatch(/trusted_projects|trustReader|CodexTrustReader|spawn|execFile/);
+    });
   });
 
   describe("PR 4 Claude manager wiring", () => {

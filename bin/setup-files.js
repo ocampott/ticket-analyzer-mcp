@@ -179,7 +179,7 @@ function validateClientRecord(client, record, root) {
   if (!isPlainObject(record) || !exactKeys(record, SIDECAR_CLIENT_KEYS[client])) return stateError(`Invalid ${client} ownership record.`);
   if (SIDECAR_CLIENT_KEYS[client].some((key) => typeof record[key] !== "string")) return stateError(`Invalid ${client} ownership record types.`);
   if (client === "claude" && (record.registrationId !== "ticket-analyzer" || record.scope !== "project" || record.command !== "ticket-analyzer-mcp" || record.envFile !== canonicalEnv(root))) return stateError("Claude ownership record does not match the canonical project binding.");
-  if (client === "codex" && (record.configPath !== ".codex/config.toml" || record.table !== "mcp_servers.ticket-analyzer" || record.command !== "ticket-analyzer-mcp" || record.envFile !== canonicalEnv(root))) return stateError("Codex ownership record does not match the canonical project binding.");
+  if (client === "codex" && (record.configPath !== CODEX_RELATIVE_CONFIG_PATH || record.table !== CODEX_TARGET_TABLE || record.command !== CODEX_COMMAND || record.envFile !== canonicalEnv(root))) return stateError("Codex ownership record does not match the canonical project binding.");
   if (client === "pi" && (record.settingsPath !== ".pi/settings.json" || record.packageName !== "ticket-analyzer-mcp" || !/^npm:ticket-analyzer-mcp@[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/.test(record.packageSpec) || record.scope !== "local" || record.environmentBinding !== "runtime-cwd-env")) return stateError("Pi ownership record does not match the canonical project binding.");
   return { safe: true };
 }
@@ -419,4 +419,166 @@ export async function writeSidecarIgnoreRule({ root, before, filesystem = {}, te
   if (!plan.safe) throw new Error(plan.reason);
   if (plan.action === "existing") return { safe: true, changed: false, target };
   return atomicTextWrite({ root, target, before, after: plan.after, filesystem, tempPath, mode: 0o644 });
+}
+
+export const CODEX_RELATIVE_CONFIG_PATH = ".codex/config.toml";
+export const CODEX_TARGET_TABLE = "mcp_servers.ticket-analyzer";
+export const CODEX_ENV_TABLE = `${CODEX_TARGET_TABLE}.env`;
+export const CODEX_ENV_KEY = "TICKET_ANALYZER_ENV_FILE";
+export const CODEX_COMMAND = "ticket-analyzer-mcp";
+export const CODEX_TRUST_PRECONDITION =
+  "Mark this project as trusted from Codex itself, then re-run setup. This manager never reads, creates, or changes any Codex trust setting.";
+export const CODEX_REPLACEMENT_LOSS_WARNING =
+  "Replacing this entry rewrites it from the canonical form: comments and formatting within the targeted entry are discarded, while every byte outside it is preserved.";
+
+const tableHeader = /^\s*\[(\[?)\s*([^[\]]+?)\s*\](\]?)\s*$/;
+const tablePair = /^\s*([A-Za-z0-9_-]+)\s*=\s*(.*)$/;
+const basicString = /^"(?:[^"\\]|\\.)*"$/;
+
+const supportedValue = (raw) => {
+  const { value } = splitValue(String(raw).trim());
+  const trimmed = value.trim();
+  if (!trimmed || /^("""|''')/.test(trimmed)) return false;
+  if (trimmed.startsWith('"')) return basicString.test(trimmed);
+  if (trimmed.startsWith("'")) return /^'[^']*'$/.test(trimmed);
+  if (trimmed.startsWith("[")) return trimmed.endsWith("]") && !/["']/.test(trimmed.slice(1, -1).replaceAll(/"[^"]*"/g, ""));
+  return !/["']/.test(trimmed);
+};
+const unquote = (raw) => {
+  const { value } = splitValue(String(raw).trim());
+  const trimmed = value.trim();
+  if (basicString.test(trimmed)) { try { return JSON.parse(trimmed); } catch { return null; } }
+  return /^'[^']*'$/.test(trimmed) ? trimmed.slice(1, -1) : null;
+};
+const skippable = (line) => !line.trim() || line.trimStart().startsWith("#");
+const sectionEnd = (lines, headers, start) => {
+  let end = (headers.find((header) => header.index > start)?.index ?? lines.length) - 1;
+  while (end > start && skippable(lines[end])) end -= 1;
+  return end;
+};
+
+export function locateCodexEntry(content) {
+  const { lines } = ignoreLines(String(content ?? ""));
+  const headers = [];
+  for (const [index, line] of lines.entries()) {
+    if (!line.trimStart().startsWith("[")) continue;
+    const match = tableHeader.exec(line);
+    if (!match || Boolean(match[1]) !== Boolean(match[3])) return stateError(`Codex config has a malformed table header on line ${index + 1}.`);
+    headers.push({ index, name: match[2], array: Boolean(match[1]) });
+  }
+  const targets = headers.filter((header) => header.name === CODEX_TARGET_TABLE);
+  const envTables = headers.filter((header) => header.name === CODEX_ENV_TABLE);
+  if ([...targets, ...envTables].some((header) => header.array)) return stateError("Codex config declares the target as an array of tables.");
+  if (targets.length > 1 || envTables.length > 1) return stateError("Codex config declares the target table more than once.");
+  if (!targets.length) {
+    return envTables.length ? stateError("Codex config has the target env subtable without its table.") : { safe: true, present: false, lines };
+  }
+
+  const start = targets[0].index;
+  const targetEnd = sectionEnd(lines, headers, start);
+  let end = targetEnd;
+  if (envTables.length) {
+    const following = headers.find((header) => header.index > start);
+    if (following?.index !== envTables[0].index) return stateError("Codex env subtable is not contiguous with its target table.");
+    end = sectionEnd(lines, headers, envTables[0].index);
+  }
+
+  const observed = { configPath: CODEX_RELATIVE_CONFIG_PATH, table: CODEX_TARGET_TABLE, command: null, envFile: null };
+  for (let index = start + 1; index <= end; index += 1) {
+    const line = lines[index];
+    if (skippable(line) || tableHeader.test(line)) continue;
+    const pair = tablePair.exec(line);
+    if (!pair || !supportedValue(pair[2])) return stateError(`Codex target entry has an unsupported or unterminated value on line ${index + 1}.`);
+    if (index <= targetEnd && pair[1] === "command") observed.command = unquote(pair[2]);
+    if (index > targetEnd && pair[1] === CODEX_ENV_KEY) observed.envFile = unquote(pair[2]);
+  }
+  return { safe: true, present: true, start, end, lines, observed };
+}
+
+const renderCodexDiff = ({ lines, start, removed, added }) => {
+  const context = 3;
+  const from = Math.max(0, start - context);
+  const to = Math.min(lines.length, start + removed + context);
+  return [
+    `--- ${CODEX_RELATIVE_CONFIG_PATH}`,
+    `+++ ${CODEX_RELATIVE_CONFIG_PATH}`,
+    `@@ -${start + 1},${removed} +${start + 1},${added.length} @@`,
+    ...lines.slice(from, start).map((line) => ` ${line}`),
+    ...lines.slice(start, start + removed).map((line) => `-${line}`),
+    ...added.map((line) => `+${line}`),
+    ...lines.slice(start + removed, to).map((line) => ` ${line}`),
+  ].join("\n");
+};
+
+export function planCodexEntry({ content, envFile, intent = "add" }) {
+  const before = String(content ?? "");
+  if (typeof envFile !== "string" || !path.isAbsolute(envFile)) return stateError("Codex entry requires an absolute managed env-file path.");
+  const located = locateCodexEntry(before);
+  if (!located.safe) return located;
+
+  const { eol, finalNewline, lines } = ignoreLines(before);
+  const fragment = [
+    `[${CODEX_TARGET_TABLE}]`,
+    `command = ${quote(CODEX_COMMAND)}`,
+    "args = []",
+    "",
+    `[${CODEX_ENV_TABLE}]`,
+    `${CODEX_ENV_KEY} = ${quote(envFile)}`,
+  ];
+  const unchanged = { safe: true, changed: false, before, after: before, diff: "", observed: located.observed ?? null };
+
+  if (intent === "remove") {
+    if (!located.present) return { ...unchanged, action: "remove" };
+    const { start, end } = located;
+    const nextLines = [...lines.slice(0, start), ...lines.slice(end + 1)];
+    let trimmed = nextLines;
+    if (start === 0) while (trimmed.length && !trimmed[0].trim()) trimmed = trimmed.slice(1);
+    else if (!lines[start - 1].trim() && nextLines[start] !== undefined && !nextLines[start].trim()) {
+      trimmed = [...nextLines.slice(0, start), ...nextLines.slice(start + 1)];
+    }
+    return {
+      safe: true,
+      action: "remove",
+      changed: true,
+      before,
+      after: trimmed.join(eol) + (finalNewline ? eol : ""),
+      diff: renderCodexDiff({ lines, start, removed: end - start + 1, added: [] }),
+      observed: located.observed,
+    };
+  }
+
+  if (!located.present) {
+    const prefix = before === "" ? "" : before.endsWith(eol) ? before : `${before}${eol}`;
+    return {
+      safe: true,
+      action: "add",
+      changed: true,
+      before,
+      after: `${prefix}${fragment.join(eol)}${eol}`,
+      diff: renderCodexDiff({ lines, start: lines.length, removed: 0, added: fragment }),
+      observed: null,
+    };
+  }
+
+  const { start, end } = located;
+  const current = lines.slice(start, end + 1);
+  if (current.length === fragment.length && current.every((line, index) => line === fragment[index])) {
+    return { ...unchanged, action: "replace" };
+  }
+  return {
+    safe: true,
+    action: "replace",
+    changed: true,
+    before,
+    after: [...lines.slice(0, start), ...fragment, ...lines.slice(end + 1)].join(eol) + (finalNewline ? eol : ""),
+    diff: renderCodexDiff({ lines, start, removed: end - start + 1, added: fragment }),
+    observed: located.observed,
+    replacementLossWarning: CODEX_REPLACEMENT_LOSS_WARNING,
+  };
+}
+
+export function acknowledgeCodexTrust({ acknowledged } = {}) {
+  return acknowledged === true
+    ? { acknowledged: true, blocked: false }
+    : { acknowledged: false, blocked: true, reason: "Codex project trust was not acknowledged for this run.", recovery: CODEX_TRUST_PRECONDITION };
 }
