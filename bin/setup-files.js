@@ -303,7 +303,7 @@ async function ensureSidecarDirectory(root, filesystem) {
   }
 }
 
-async function atomicTextWrite({ root, target, before, after, filesystem, tempPath, mode = 0o600 }) {
+export async function atomicTextWrite({ root, target, before, after, filesystem, tempPath, mode = 0o600 }) {
   await validateProjectPath(root, target, filesystem);
   const absoluteTarget = path.resolve(target);
   const absoluteTemp = path.resolve(tempPath ?? `${absoluteTarget}.tmp-${process.pid}-${Date.now()}`);

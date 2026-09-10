@@ -28,9 +28,11 @@ import {
   planCodexEntry,
 } from "./setup-files.js";
 import {
+  CLIENT_EXECUTION_ORDER,
   buildPlan,
   computePlanId,
   executePlan,
+  orderSetupOperations,
   renderPlan,
   resolveProjectRoot,
   setupCommand,
@@ -865,6 +867,126 @@ describe("setup manager PR 1 guardrails", () => {
       expect(text).toMatch(/Client claude: add/i);
       expect(text).toMatch(/codex/i);
       expect(text).toMatch(/trust/i);
+    });
+  });
+
+  describe("PR 8 ordered execution", () => {
+    const root = "/repo";
+    const baseFs = () => memoryFs({ [root]: "dir", [path.join(root, ".git")]: "file" });
+    const run = (options) => {
+      const output = [];
+      return setupCommand({
+        cwd: root,
+        filesystem: baseFs(),
+        stdin: { isTTY: false },
+        stdout: { isTTY: false, write: (text) => output.push(text) },
+        environment: { PATH: "/safe" },
+        confirm: async () => true,
+        ...options,
+      }).then((code) => ({ code, text: output.join("\n") }));
+    };
+    const stubAdapter = (client, record) => ({
+      discover: async () => ({ client, classification: "absent" }),
+      buildOperation: () => ({ client, kind: "add" }),
+      execute: async () => { record.push(client); return { success: true }; },
+    });
+
+    test("orders the stages provider, ignore rule, claude, codex, pi regardless of input order", () => {
+      expect(CLIENT_EXECUTION_ORDER).toEqual(["claude", "codex", "pi"]);
+      const ordered = orderSetupOperations({
+        provider: { id: "providers" },
+        ignore: { id: "ignore-rule" },
+        clients: [{ id: "pi" }, { id: "codex" }, { id: "claude" }],
+      });
+      expect(ordered.map((operation) => operation.id)).toEqual(["providers", "ignore-rule", "claude", "codex", "pi"]);
+      expect(orderSetupOperations({ clients: [{ id: "codex" }] }).map((operation) => operation.id)).toEqual(["codex"]);
+    });
+
+    test("executes the provider write, then the ignore rule, then the clients in fixed order", async () => {
+      const record = [];
+      const adapters = { claude: stubAdapter("claude", record), codex: stubAdapter("codex", record), pi: stubAdapter("pi", record) };
+      const { code } = await run({
+        selections: { providers: ["trello"], clients: ["pi", "codex", "claude"] },
+        providerValues: { trello: { TRELLO_API_KEY: "key", TRELLO_TOKEN: "token" } },
+        adapters,
+        writeEnvFile: async () => record.push("providers"),
+        ensureIgnoreRule: async () => record.push("ignore-rule"),
+        writeOwnership: async () => {},
+      });
+      expect(code).toBe(0);
+      expect(record).toEqual(["providers", "ignore-rule", "claude", "codex", "pi"]);
+    });
+
+    test("writes the edited env bytes through the atomic writer and skips the stage without provider work", async () => {
+      const writeEnvFile = jest.fn();
+      await run({ selections: { providers: ["trello"], clients: [] }, providerValues: { trello: { TRELLO_API_KEY: "key" } }, writeEnvFile });
+      const preparation = writeEnvFile.mock.calls[0][0];
+      expect(preparation).toMatchObject({ operation: "atomic-write", target: resolveManagedEnvPath(root), mode: 0o600 });
+      expect(preparation.content).toContain('TRELLO_API_KEY="key"');
+      expect(Object.keys(preparation)).not.toContain("content");
+      const untouched = jest.fn();
+      await run({ selections: { providers: [], clients: [] }, writeEnvFile: untouched });
+      expect(untouched).not.toHaveBeenCalled();
+    });
+
+    test("stops at the first failure, reports the remaining state, and never rolls back", async () => {
+      const record = [];
+      const failing = { ...stubAdapter("codex", record), execute: async () => { throw new Error("codex write refused"); } };
+      const { code, text } = await run({
+        selections: { providers: [], clients: ["claude", "codex", "pi"] },
+        adapters: { claude: stubAdapter("claude", record), codex: failing, pi: stubAdapter("pi", record) },
+        ensureIgnoreRule: async () => {},
+        writeOwnership: async () => {},
+      });
+      expect(code).toBe(1);
+      expect(record).toEqual(["claude"]);
+      expect(text).toMatch(/completed: ignore-rule, claude/i);
+      expect(text).toMatch(/failed: codex/i);
+      expect(text).toMatch(/unattempted: pi/i);
+      expect(text).toMatch(/no automatic rollback/i);
+    });
+
+    test("keeps provider secrets out of the failure report", async () => {
+      const { text } = await run({
+        selections: { providers: ["trello"], clients: [] },
+        providerValues: { trello: { TRELLO_TOKEN: "super-secret-token" } },
+        writeEnvFile: async () => { throw new Error("denied writing super-secret-token"); },
+      });
+      expect(text).not.toContain("super-secret-token");
+      expect(text).toMatch(/\[redacted\]/);
+    });
+
+    test("reports a truthful partial state when the target changed but its ownership record did not", async () => {
+      const record = [];
+      const adapter = {
+        ...stubAdapter("claude", record),
+        execute: async (operation, dependencies) => { record.push("claude-target"); await dependencies.writeOwnership({}); },
+      };
+      const { code, text } = await run({
+        selections: { providers: [], clients: ["claude"] },
+        adapters: { claude: adapter },
+        ensureIgnoreRule: async () => {},
+        writeOwnership: async () => { throw new Error("sidecar write denied"); },
+      });
+      expect(code).toBe(1);
+      expect(record).toEqual(["claude-target"]);
+      expect(text).toMatch(/failed: claude/i);
+      expect(text).toMatch(/sidecar write denied/i);
+    });
+
+    test("executes the selectable clients even when another one is blocked", async () => {
+      const record = [];
+      const blocked = { discover: async () => ({ classification: "unknown" }), buildOperation: () => ({ blocked: true, reason: "Pi stays manual." }), execute: jest.fn() };
+      const { code, text } = await run({
+        selections: { providers: [], clients: ["claude", "pi"] },
+        adapters: { claude: stubAdapter("claude", record), pi: blocked },
+        ensureIgnoreRule: async () => {},
+        writeOwnership: async () => {},
+      });
+      expect(code).toBe(0);
+      expect(record).toEqual(["claude"]);
+      expect(text).toMatch(/Pi stays manual/);
+      expect(blocked.execute).not.toHaveBeenCalled();
     });
   });
 
