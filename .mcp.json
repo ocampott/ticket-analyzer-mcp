@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "pm": {
+    "ticket-analyzer": {
       "command": "ticket-analyzer-mcp",
       "args": []
     }

@@ -1,20 +1,10 @@
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-export const TICKET_ENV_VARS = Object.freeze([
-  "TICKET_ANALYZER_ENV_FILE",
-  "TRELLO_API_KEY",
-  "TRELLO_TOKEN",
-  "TRELLO_DEFAULT_BOARD_ID",
-  "JIRA_HOST",
-  "JIRA_EMAIL",
-  "JIRA_API_TOKEN",
-  "AZURE_DEVOPS_ORG",
-  "AZURE_DEVOPS_PROJECT",
-  "AZURE_DEVOPS_PAT",
-]);
+export const ENV_FILE_VARIABLE = "TICKET_ANALYZER_ENV_FILE";
 
 export const READ_ONLY_TOOLS = new Set([
   "get_trello_card",
@@ -30,12 +20,13 @@ export const READ_ONLY_TOOLS = new Set([
 const SERVER_PATH = fileURLToPath(new URL("../dist/index.js", import.meta.url));
 const EMPTY_PARAMETERS = { type: "object", properties: {} };
 
-export function getTicketEnvironment(source = process.env) {
-  const env = {};
-  for (const name of TICKET_ENV_VARS) {
-    if (typeof source[name] === "string") env[name] = source[name];
-  }
-  return env;
+// The child loads its own credentials from the env file, so the only thing this process
+// hands it is where that file lives. No provider value crosses the boundary.
+export function getTicketEnvironment({ source = process.env, cwd } = {}) {
+  const supplied = typeof source[ENV_FILE_VARIABLE] === "string" ? source[ENV_FILE_VARIABLE].trim() : "";
+  if (supplied && path.isAbsolute(supplied)) return { [ENV_FILE_VARIABLE]: supplied };
+  if (typeof cwd !== "string" || !cwd) return {};
+  return { [ENV_FILE_VARIABLE]: path.resolve(cwd, supplied || ".env") };
 }
 
 export function isReadOnlyTool(name) {
@@ -156,7 +147,7 @@ export default function ticketAnalyzerExtension(pi) {
       const nextTransport = new StdioClientTransport({
         command: process.execPath,
         args: [SERVER_PATH],
-        env: getTicketEnvironment(),
+        env: getTicketEnvironment({ cwd: ctx.cwd }),
         cwd: ctx.cwd,
         stderr: "inherit",
       });

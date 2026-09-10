@@ -84,13 +84,23 @@ describe("2.3.1 release metadata and guidance", () => {
 
   test("uses the globally installed binary in the MCP template without credentials", () => {
     const mcp = JSON.parse(read(".mcp.json")) as {
-      mcpServers: { pm: { command: string; args: string[] } };
+      mcpServers: Record<string, { command: string; args: string[]; env?: unknown }>;
     };
 
-    expect(mcp.mcpServers.pm.command).toBe("ticket-analyzer-mcp");
-    expect(mcp.mcpServers.pm.args).toEqual([]);
+    expect(Object.keys(mcp.mcpServers)).toEqual(["ticket-analyzer"]);
+    expect(mcp.mcpServers["ticket-analyzer"].command).toBe("ticket-analyzer-mcp");
+    expect(mcp.mcpServers["ticket-analyzer"].args).toEqual([]);
+    expect(mcp.mcpServers["ticket-analyzer"].env).toBeUndefined();
     expect(read(".mcp.json")).not.toContain("npx");
     expect(read(".mcp.json")).not.toMatch(/TRELLO_|JIRA_|AZURE_DEVOPS_|TOKEN|PAT|SECRET/i);
+    expect(read(".mcp.json")).not.toMatch(/\/(?:Users|home)\//);
+  });
+
+  test("keeps the Pi runtime credential-free and bound only to the env file", () => {
+    const extension = read("extensions/ticket-analyzer.js");
+
+    expect(extension).toContain('export const ENV_FILE_VARIABLE = "TICKET_ANALYZER_ENV_FILE"');
+    expect(extension).not.toMatch(/TRELLO_|JIRA_|AZURE_DEVOPS_/);
   });
 
   test("keeps the centralized npm policy and client guidance aligned", () => {
