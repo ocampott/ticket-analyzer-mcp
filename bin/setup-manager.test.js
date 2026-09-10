@@ -27,6 +27,7 @@ import {
   resolveProjectRoot,
   setupCommand,
 } from "./setup-manager.js";
+import { ClaudeAdapter, inspectClaudeProjectConfig, renderClaudeOperation } from "./setup-adapters.js";
 
 const ENOENT = () => Object.assign(new Error("missing"), { code: "ENOENT" });
 function memoryFs(entries, canonical = "/workspace/repo") {
@@ -346,7 +347,87 @@ describe("setup manager PR 1 guardrails", () => {
     });
   });
 
-  describe("PR 3 interaction safety remediation", () => {
+  describe("PR 4 Claude project-MCP reconciliation", () => {
+        const root = "/repo";
+        const canonical = { registrationId: "ticket-analyzer", scope: "project", command: "ticket-analyzer-mcp", envFile: "/repo/.env" };
+        const adapterFor = ({ output = JSON.stringify({ name: "ticket-analyzer", scope: "project", command: "ticket-analyzer-mcp", env: { TICKET_ANALYZER_ENV_FILE: "/repo/.env" } }), config = { safe: true, tracked: false }, executable = "/bin/claude" } = {}) => new ClaudeAdapter({
+          resolveExecutable: async () => executable,
+          runCommand: async () => ({ stdout: output, stderr: "" }),
+          inspectProjectConfig: async () => config,
+        });
+
+        test("classifies fixture-pinned owned, matching, foreign, and safe unknown Claude registrations", async () => {
+          const matching = await adapterFor().discover({ root });
+          const state = buildOwnershipState(root, { claude: canonical });
+          const owned = await adapterFor().discover({ root, state });
+          const foreign = await adapterFor({ output: JSON.stringify({ name: "ticket-analyzer", scope: "project", command: "other", env: {} }) }).discover({ root });
+          const unknown = await Promise.all([
+            adapterFor({ executable: null }).discover({ root }), adapterFor({ output: "[]" }).discover({ root }),
+            adapterFor({ config: { safe: false, reason: "unsafe .mcp.json" } }).discover({ root }), adapterFor({ config: { safe: true, tracked: true } }).discover({ root }),
+          ]);
+          expect([matching.classification, owned.classification, foreign.classification]).toEqual(["matching", "owned", "foreign"]);
+          for (const result of unknown) expect(result).toMatchObject({ classification: "unknown", recovery: expect.stringMatching(/manual/i) });
+        });
+
+        test("classifies a fixture-pinned absent registration as addable", async () => {
+          const adapter = adapterFor({ output: "null" });
+          const absent = await adapter.discover({ root });
+          const operation = adapter.buildOperation({ discovery: absent });
+          expect(absent).toMatchObject({ classification: "absent", observed: { absent: true } });
+          expect(operation).toMatchObject({ kind: "add", argv: ["mcp", "add", "--scope", "project", "ticket-analyzer", "--env", "TICKET_ANALYZER_ENV_FILE=/repo/.env", "--", "ticket-analyzer-mcp"] });
+        });
+        test("rejects malformed or symlinked conventional Claude config before inspection", async () => {
+          const malformed = { ...memoryFs({ [root]: "dir", [path.join(root, ".mcp.json")]: "file" }), readFile: async () => "{" };
+          const symlink = memoryFs({ [root]: "dir", [path.join(root, ".mcp.json")]: "link" });
+          await expect(inspectClaudeProjectConfig({ root, filesystem: malformed })).resolves.toMatchObject({ safe: false });
+          await expect(inspectClaudeProjectConfig({ root, filesystem: symlink })).resolves.toMatchObject({ safe: false });
+        });
+
+        test("requires explicit adoption or replacement and renders only shell-free project MCP argv", async () => {
+          const adapter = adapterFor();
+          const matching = await adapter.discover({ root });
+          const foreign = await adapterFor({ output: JSON.stringify({ name: "ticket-analyzer", scope: "project", command: "other", env: {} }) }).discover({ root });
+          expect(adapter.buildOperation({ discovery: matching })).toMatchObject({ blocked: true });
+          expect(adapter.buildOperation({ discovery: matching, decision: "adopt" })).toMatchObject({ kind: "adopt", argv: [] });
+          expect(adapter.buildOperation({ discovery: foreign })).toMatchObject({ blocked: true });
+          const replace = adapter.buildOperation({ discovery: foreign, decision: "replace" });
+          expect(replace.argv).toEqual(["mcp", "add", "--scope", "project", "ticket-analyzer", "--env", "TICKET_ANALYZER_ENV_FILE=/repo/.env", "--", "ticket-analyzer-mcp"]);
+          expect(renderClaudeOperation(replace)).toContain(JSON.stringify(replace.argv));
+          expect(renderClaudeOperation(replace)).not.toMatch(/plugin|marketplace|AGENTS|shell/i);
+        });
+
+        test("removes only an owned project MCP entry before its sidecar", async () => {
+          const operation = adapterFor().buildOperation({ discovery: { client: "claude", classification: "owned", root, executable: "/bin/claude", observed: canonical }, intent: "remove" });
+          const events = [];
+          await expect(adapterFor().execute(operation, { runCommand: async (_file, argv) => events.push(argv), discover: async () => ({ classification: "absent", observed: null }), ensureIgnoreRule: async () => events.push("ignore"), writeOwnership: async (state) => events.push(state) })).resolves.toEqual({ success: true });
+          expect(events).toEqual([["mcp", "remove", "--scope", "project", "ticket-analyzer"], null]);
+        });
+
+        test("does not persist Claude ownership when post-command semantics differ", async () => {
+          const operation = adapterFor().buildOperation({ discovery: { client: "claude", classification: "foreign", root, executable: "/bin/claude", observed: { command: "other" } }, decision: "replace" });
+          const writeOwnership = jest.fn();
+          await expect(adapterFor().execute(operation, { runCommand: async () => ({}), discover: async () => ({ classification: "foreign", observed: { ...canonical, command: "other" } }), writeOwnership })).rejects.toThrow(/post-command verification/i);
+          expect(writeOwnership).not.toHaveBeenCalled();
+        });
+
+        test("verifies canonical semantics before sidecar persistence and bounds redacted child handling", async () => {
+          const adapter = adapterFor();
+          const operation = adapter.buildOperation({ discovery: { client: "claude", classification: "foreign", root, observed: { command: "other" } }, decision: "replace" });
+          const calls = [];
+          await expect(adapter.execute(operation, {
+            runCommand: async (_file, _argv, options) => { calls.push({ step: "target", options }); return { stdout: "token=child-secret", stderr: "" }; },
+            discover: async () => ({ classification: "matching", observed: canonical }),
+            ensureIgnoreRule: async () => calls.push("ignore"),
+            writeOwnership: async (facts) => calls.push({ step: "sidecar", facts }),
+            environment: { PATH: "/safe", JIRA_API_TOKEN: "secret", TICKET_ANALYZER_ENV_FILE: "/leak" },
+          })).resolves.toEqual({ success: true });
+          expect(calls.map((entry) => entry.step ?? entry)).toEqual(["ignore", "target", "sidecar"]);
+          expect(calls[1].options).toEqual(expect.objectContaining({ shell: false, cwd: root, maxOutputBytes: 16 * 1024, timeoutMs: 60_000, clientEnv: { PATH: "/safe" } }));
+          expect(JSON.stringify(calls)).not.toContain("child-secret");
+        });
+  });
+
+      describe("PR 3 interaction safety remediation", () => {
     test.each([
       ["stdin", { stdin: { isTTY: false }, stdout: { isTTY: true } }],
       ["stdout", { stdin: { isTTY: true }, stdout: { isTTY: false } }],
