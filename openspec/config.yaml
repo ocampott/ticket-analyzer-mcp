@@ -1,0 +1,45 @@
+schema_version: 1
+project:
+  name: ticket-analyzer-mcp
+  root: .
+  context_file: openspec/project-context.md
+artifact_store: openspec
+execution:
+  mode: auto
+  model_routing:
+    sdd_init: openai-codex/gpt-5.6-terra
+delivery:
+  strategy: ask-on-risk
+  review_budget_lines: 400
+  exception_requires_explicit_size_exception: true
+testing:
+  strict_tdd: true
+  runner: npm test
+  build: npm run build
+  stack: TypeScript (NodeNext) with Jest and ts-jest
+phase_rules:
+  init:
+    allowed_artifacts:
+      - openspec/config.yaml
+      - openspec/project-context.md
+    prohibit_product_changes: true
+  proposal_spec_design:
+    required_before_implementation: true
+    require_reviewable_artifacts: true
+  implementation:
+    require_approved_spec_and_design: true
+    require_failing_test_before_production_change: true
+    require_focused_tests_and_build: true
+    require_work_unit_slicing_when_forecast_exceeds_review_budget: true
+  delivery:
+    on_review_budget_risk: ask
+    prohibit_inferred_size_exception: true
+human_gates:
+  require_confirmation_for:
+    - destructive_actions
+    - publishing_or_commits
+    - credential_or_security_changes
+    - ambiguous_scope
+    - provider_removal
+    - client_removal
+    - size_exception
