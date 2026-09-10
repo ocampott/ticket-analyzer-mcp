@@ -1,4 +1,5 @@
 import path from "node:path";
+import { mkdir as nativeMkdir, open as nativeOpen, readFile as nativeReadFile, rename as nativeRename, rm as nativeRm } from "node:fs/promises";
 
 export const PROVIDER_ENV_VARS = Object.freeze({
   trello: ["TRELLO_API_KEY", "TRELLO_TOKEN"],
@@ -156,4 +157,266 @@ export async function prepareAtomicWrite({ root, target, before, editResult, mod
   };
   Object.defineProperty(preparation, "content", { value: after, enumerable: false });
   return preparation;
+}
+
+export const SIDECAR_RELATIVE_PATH = ".ticket-analyzer/setup-state.json";
+export const SIDECAR_IGNORE_RULE = "/.ticket-analyzer/setup-state.json";
+const SIDECAR_CLIENT_KEYS = {
+  claude: ["registrationId", "scope", "command", "envFile"],
+  codex: ["configPath", "table", "command", "envFile"],
+  pi: ["settingsPath", "packageName", "packageSpec", "scope", "environmentBinding"],
+};
+const stateError = (reason) => ({ safe: false, reason });
+const isPlainObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const exactKeys = (value, allowed) => Object.keys(value).every((key) => allowed.includes(key));
+const canonicalRoot = (root) => typeof root === "string" && path.isAbsolute(root) && path.resolve(root) === root;
+const canonicalEnv = (root) => path.join(root, ".env");
+const missingFile = (error) => error?.code === "ENOENT";
+const sidecarPath = (root) => path.join(root, SIDECAR_RELATIVE_PATH);
+const fsMethod = (filesystem, name, fallback) => filesystem?.[name] ?? fallback;
+
+function validateClientRecord(client, record, root) {
+  if (!isPlainObject(record) || !exactKeys(record, SIDECAR_CLIENT_KEYS[client])) return stateError(`Invalid ${client} ownership record.`);
+  if (SIDECAR_CLIENT_KEYS[client].some((key) => typeof record[key] !== "string")) return stateError(`Invalid ${client} ownership record types.`);
+  if (client === "claude" && (record.registrationId !== "ticket-analyzer" || record.scope !== "project" || record.command !== "ticket-analyzer-mcp" || record.envFile !== canonicalEnv(root))) return stateError("Claude ownership record does not match the canonical project binding.");
+  if (client === "codex" && (record.configPath !== ".codex/config.toml" || record.table !== "mcp_servers.ticket-analyzer" || record.command !== "ticket-analyzer-mcp" || record.envFile !== canonicalEnv(root))) return stateError("Codex ownership record does not match the canonical project binding.");
+  if (client === "pi" && (record.settingsPath !== ".pi/settings.json" || record.packageName !== "ticket-analyzer-mcp" || !/^npm:ticket-analyzer-mcp@[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/.test(record.packageSpec) || record.scope !== "local" || record.environmentBinding !== "runtime-cwd-env")) return stateError("Pi ownership record does not match the canonical project binding.");
+  return { safe: true };
+}
+
+export function validateOwnershipState(state, expectedRoot) {
+  if (!isPlainObject(state) || state.schemaVersion !== 1 || !canonicalRoot(state.projectRoot) || state.projectRoot !== expectedRoot || !isPlainObject(state.clients) || !exactKeys(state, ["schemaVersion", "projectRoot", "clients"]) || !Object.keys(state.clients).every((client) => Object.hasOwn(SIDECAR_CLIENT_KEYS, client))) return stateError("Ownership state has an invalid schema or canonical project root.");
+  for (const [client, record] of Object.entries(state.clients)) {
+    const result = validateClientRecord(client, record, expectedRoot);
+    if (!result.safe) return result;
+  }
+  return { safe: true, state };
+}
+
+export function buildOwnershipState(projectRoot, clients = {}) {
+  const state = { schemaVersion: 1, projectRoot, clients: {} };
+  for (const client of Object.keys(clients)) {
+    if (!Object.hasOwn(SIDECAR_CLIENT_KEYS, client)) throw new Error(`Unsupported ownership client: ${client}`);
+    state.clients[client] = Object.fromEntries(SIDECAR_CLIENT_KEYS[client].map((key) => [key, clients[client]?.[key]]));
+  }
+  const result = validateOwnershipState(state, projectRoot);
+  if (!result.safe) throw new Error(result.reason);
+  return state;
+}
+
+function hasDuplicateJsonKeys(source) {
+  let index = 0;
+  const whitespace = () => { while (/\s/.test(source[index] ?? "")) index += 1; };
+  const string = () => {
+    if (source[index++] !== '"') throw new Error("Expected JSON string");
+    while (index < source.length) {
+      if (source[index] === "\\") { index += 2; continue; }
+      if (source[index++] === '"') return;
+    }
+    throw new Error("Unterminated JSON string");
+  };
+  const value = () => {
+    whitespace();
+    if (source[index] === '"') { string(); return; }
+    if (source[index] === "{") { object(); return; }
+    if (source[index] === "[") { array(); return; }
+    const start = index;
+    while (index < source.length && !/[,\]}\s]/.test(source[index])) index += 1;
+    if (start === index) throw new Error("Expected JSON value");
+  };
+  const object = () => {
+    index += 1;
+    const keys = new Set();
+    whitespace();
+    if (source[index] === "}") { index += 1; return; }
+    while (index < source.length) {
+      whitespace();
+      const start = index;
+      string();
+      const key = JSON.parse(source.slice(start, index));
+      if (keys.has(key)) throw new Error(`Duplicate JSON key: ${key}`);
+      keys.add(key);
+      whitespace();
+      if (source[index++] !== ":") throw new Error("Expected JSON colon");
+      value();
+      whitespace();
+      if (source[index] === "}") { index += 1; return; }
+      if (source[index++] !== ",") throw new Error("Expected JSON comma");
+    }
+    throw new Error("Unterminated JSON object");
+  };
+  const array = () => {
+    index += 1;
+    whitespace();
+    if (source[index] === "]") { index += 1; return; }
+    while (index < source.length) {
+      value();
+      whitespace();
+      if (source[index] === "]") { index += 1; return; }
+      if (source[index++] !== ",") throw new Error("Expected JSON comma");
+    }
+    throw new Error("Unterminated JSON array");
+  };
+  try { value(); whitespace(); if (index !== source.length) throw new Error("Trailing JSON data"); return false; } catch { return true; }
+}
+
+export function serializeOwnershipState(state) {
+  const checked = validateOwnershipState(state, state?.projectRoot);
+  if (!checked.safe) throw new Error(checked.reason);
+  return `${JSON.stringify(state, null, 2)}\n`;
+}
+
+export function parseOwnershipState(content, expectedRoot) {
+  try {
+    if (typeof content !== "string" || hasDuplicateJsonKeys(content)) return stateError("Ownership state is malformed or contains duplicate keys.");
+    const state = JSON.parse(content);
+    const checked = validateOwnershipState(state, expectedRoot);
+    return checked.safe ? { safe: true, state } : checked;
+  } catch (error) { return stateError(`Ownership state is invalid: ${error.message}`); }
+}
+
+export async function readOwnershipState({ root, filesystem = {}, readFile }) {
+  const target = sidecarPath(root);
+  await validateProjectPath(root, target, filesystem);
+  let stat;
+  try { stat = await filesystem.lstat(target); } catch (error) { if (missingFile(error)) return { exists: false, state: null }; throw error; }
+  if (stat.isSymbolicLink?.()) throw new Error(`Refusing symlinked sidecar: ${target}`);
+  if (!stat.isFile?.()) throw new Error(`Sidecar is not a regular file: ${target}`);
+  const reader = readFile ?? fsMethod(filesystem, "readFile", nativeReadFile);
+  const content = String(await reader(target, "utf8"));
+  const parsed = parseOwnershipState(content, path.resolve(root));
+  if (!parsed.safe) throw new Error(parsed.reason);
+  return { exists: true, state: parsed.state, content };
+}
+
+async function ensureSidecarDirectory(root, filesystem) {
+  const directory = path.join(root, ".ticket-analyzer");
+  try {
+    const stat = await filesystem.lstat(directory);
+    if (stat.isSymbolicLink?.()) throw new Error(`Refusing symlinked sidecar directory: ${directory}`);
+    if (!stat.isDirectory?.()) throw new Error(`Sidecar parent is not a directory: ${directory}`);
+  } catch (error) {
+    if (!missingFile(error)) throw error;
+    await fsMethod(filesystem, "mkdir", nativeMkdir)(directory, { recursive: true, mode: 0o700 });
+    const stat = await filesystem.lstat(directory);
+    if (stat.isSymbolicLink?.() || !stat.isDirectory?.()) throw new Error(`Unsafe sidecar directory: ${directory}`);
+  }
+}
+
+async function atomicTextWrite({ root, target, before, after, filesystem, tempPath, mode = 0o600 }) {
+  await validateProjectPath(root, target, filesystem);
+  const absoluteTarget = path.resolve(target);
+  const absoluteTemp = path.resolve(tempPath ?? `${absoluteTarget}.tmp-${process.pid}-${Date.now()}`);
+  if (absoluteTemp === absoluteTarget || path.dirname(absoluteTemp) !== path.dirname(absoluteTarget)) throw new Error("Atomic temporary file must be beside its target.");
+  await validateProjectPath(root, absoluteTemp, filesystem);
+  let current = null;
+  try { current = String(await fsMethod(filesystem, "readFile", nativeReadFile)(absoluteTarget, "utf8")); } catch (error) { if (!missingFile(error)) throw error; }
+  if (before !== undefined && current !== before) throw new Error(`Atomic source changed before writing: ${absoluteTarget}`);
+  let handle;
+  try {
+    handle = await fsMethod(filesystem, "open", nativeOpen)(absoluteTemp, "wx", mode);
+    await handle.writeFile(after, "utf8");
+    await handle.sync();
+    await handle.chmod?.(mode);
+    await handle.close();
+    handle = null;
+    await fsMethod(filesystem, "rename", nativeRename)(absoluteTemp, absoluteTarget);
+    const syncDirectory = filesystem.fsyncDirectory ?? (async (directory) => {
+      const directoryHandle = await nativeOpen(directory, "r");
+      try { await directoryHandle.sync(); } finally { await directoryHandle.close(); }
+    });
+    try { await syncDirectory(path.dirname(absoluteTarget)); } catch (error) { if (!["ENOTSUP", "EINVAL", "EISDIR"].includes(error?.code)) throw error; }
+  } catch (error) {
+    await handle?.close?.().catch?.(() => {});
+    await fsMethod(filesystem, "rm", nativeRm)(absoluteTemp, { force: true }).catch?.(() => {});
+    throw error;
+  }
+  return { safe: true, target: absoluteTarget };
+}
+
+export async function writeOwnershipState({ root, state, filesystem = {}, before, tempPath }) {
+  const checked = validateOwnershipState(state, path.resolve(root));
+  if (!checked.safe) throw new Error(checked.reason);
+  const target = sidecarPath(root);
+  await validateProjectPath(root, target, filesystem);
+  await ensureSidecarDirectory(root, filesystem);
+  return atomicTextWrite({ root, target, before, after: serializeOwnershipState(state), filesystem, tempPath, mode: 0o600 });
+}
+
+export async function persistOwnershipAfterSuccess({ action, state, write }) {
+  if (action?.success !== true) return { updated: false, state, reason: "Ownership state waits for a successful associated action." };
+  if (typeof write !== "function") throw new Error("Ownership persistence requires a write function.");
+  await write(state);
+  return { updated: true, state };
+}
+
+const comparable = (client, value) => value && SIDECAR_CLIENT_KEYS[client].every((key) => value[key] === undefined || typeof value[key] === "string") ? Object.fromEntries(SIDECAR_CLIENT_KEYS[client].filter((key) => value[key] !== undefined).map((key) => [key, value[key]])) : null;
+const sameFacts = (left, right) => left && right && Object.keys(left).every((key) => left[key] === right[key]) && Object.keys(right).every((key) => left[key] === right[key]);
+
+export function classifyOwnership({ client, state, observed, canonical }) {
+  if (!Object.hasOwn(SIDECAR_CLIENT_KEYS, client) || observed?.safe === false) return { classification: "unknown", reason: "Unsupported or unsafe ownership observation." };
+  const facts = comparable(client, observed);
+  if (!facts) return { classification: "unknown", reason: "Ownership observation has invalid fields." };
+  const validState = state && validateOwnershipState(state, state.projectRoot).safe;
+  const record = validState ? state.clients[client] : undefined;
+  if (state && !validState) return { classification: "unknown", reason: "Ownership sidecar is invalid or stale." };
+  if (record) return sameFacts(record, facts) ? { classification: "owned" } : { classification: "unknown", reason: "Sidecar and project target disagree." };
+  if (observed.absent === true) return { classification: "absent" };
+  const intended = comparable(client, canonical);
+  return intended && sameFacts(intended, facts) ? { classification: "matching" } : { classification: "foreign" };
+}
+
+function ignoreLines(content) {
+  const eol = content.includes("\r\n") ? "\r\n" : "\n";
+  const finalNewline = content.endsWith(eol);
+  const body = finalNewline ? content.slice(0, -eol.length) : content;
+  return { eol, finalNewline, lines: body ? body.split(/\r\n|\n/) : [] };
+}
+
+export function inspectSidecarIgnoreRule(content) {
+  const { lines } = ignoreLines(String(content ?? ""));
+  let exact = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    if (trimmed === SIDECAR_IGNORE_RULE) { exact += 1; continue; }
+    if (trimmed.startsWith("!") || /[\\*?\[\]]/.test(trimmed) || /(?:\.ticket-analyzer|setup-state\.json)/.test(trimmed) || trimmed.endsWith("/")) return stateError("The root ignore rules contain an ambiguous sidecar-related pattern.");
+  }
+  if (exact > 1) return stateError("The root ignore rule is duplicated.");
+  return { safe: true, action: exact === 1 ? "existing" : "append", rule: SIDECAR_IGNORE_RULE };
+}
+
+const textDiff = (before, after) => {
+  const oldLines = ignoreLines(before).lines;
+  const newLines = ignoreLines(after).lines;
+  const addedLines = newLines.slice(oldLines.length);
+  const lines = ["--- .gitignore", "+++ .gitignore", `@@ -${oldLines.length ? 1 : 0},${oldLines.length} +1,${newLines.length} @@`];
+  for (const line of oldLines) lines.push(` ${line}`);
+  for (const line of addedLines) lines.push(`+${line}`);
+  return lines.join("\n");
+};
+
+export function planSidecarIgnoreRule(content) {
+  const before = String(content ?? "");
+  const inspected = inspectSidecarIgnoreRule(before);
+  if (!inspected.safe || inspected.action === "existing") return { ...inspected, before, after: before, diff: "" };
+  const { eol, finalNewline } = ignoreLines(before);
+  const after = !before ? `${SIDECAR_IGNORE_RULE}\n` : `${before}${finalNewline ? "" : eol}${SIDECAR_IGNORE_RULE}${finalNewline ? eol : ""}`;
+  return { ...inspected, before, after, diff: textDiff(before, after) };
+}
+
+export async function inspectSidecarIgnoreRuleFile({ root, filesystem = {}, readFile }) {
+  const target = path.join(root, ".gitignore");
+  await validateProjectPath(root, target, filesystem);
+  let content = "";
+  try { content = String(await (readFile ?? fsMethod(filesystem, "readFile", nativeReadFile))(target, "utf8")); } catch (error) { if (!missingFile(error)) throw error; }
+  return { ...planSidecarIgnoreRule(content), path: target };
+}
+
+export async function writeSidecarIgnoreRule({ root, before, filesystem = {}, tempPath }) {
+  const target = path.join(root, ".gitignore");
+  const plan = planSidecarIgnoreRule(before);
+  if (!plan.safe) throw new Error(plan.reason);
+  if (plan.action === "existing") return { safe: true, changed: false, target };
+  return atomicTextWrite({ root, target, before, after: plan.after, filesystem, tempPath, mode: 0o644 });
 }
