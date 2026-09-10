@@ -5,9 +5,10 @@ import path from "node:path";
 import process from "node:process";
 import { checkbox, confirm, input as inquirerInput, password } from "@inquirer/prompts";
 import dotenv from "dotenv";
-import { setupCommand as runSetupManager } from "./setup-manager.js";
+import { CLIENT_EXECUTION_ORDER, setupCommand as runSetupManager } from "./setup-manager.js";
+import { PROVIDER_ENV_VARS } from "./setup-files.js";
 
-const VERSION = "2.3.1";
+const VERSION = "3.0.0";
 const ENV_FILE_VARIABLE = "TICKET_ANALYZER_ENV_FILE";
 const PROVIDERS = {
   trello: ["TRELLO_API_KEY", "TRELLO_TOKEN"],
@@ -52,9 +53,30 @@ const CLIENT_CHOICES = [
   { name: "OpenAI Codex", value: "codex" },
   { name: "Pi", value: "pi" },
 ];
+const SETUP_SELECTION_FLAGS = Object.freeze({
+  "--providers": { key: "providers", allowed: Object.keys(PROVIDER_ENV_VARS) },
+  "--clients": { key: "clients", allowed: [...CLIENT_EXECUTION_ORDER] },
+});
+
 export function parseSetupArgs(args) {
   const seen = new Set();
-  for (const arg of args) {
+  const selections = {};
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const separator = arg.indexOf("=");
+    const name = separator === -1 ? arg : arg.slice(0, separator);
+    const flag = SETUP_SELECTION_FLAGS[name];
+    if (flag) {
+      if (seen.has(name)) throw new Error(`Invalid setup argument: duplicate ${name}`);
+      seen.add(name);
+      const raw = separator === -1 ? args[++index] : arg.slice(separator + 1);
+      const values = [...new Set((raw ?? "").split(",").map((value) => value.trim()).filter(Boolean))];
+      if (values.length === 0) throw new Error(`Invalid setup argument: ${name} needs a comma-separated value`);
+      const unknown = values.find((value) => !flag.allowed.includes(value));
+      if (unknown) throw new Error(`Invalid setup argument: ${name} does not accept ${unknown}`);
+      selections[flag.key] = values;
+      continue;
+    }
     if (arg !== "--configure-clients" && arg !== "--dry-run") {
       throw new Error(`Invalid setup argument: ${arg}`);
     }
@@ -63,7 +85,10 @@ export function parseSetupArgs(args) {
   }
   const configureClients = seen.has("--configure-clients");
   const dryRun = seen.has("--dry-run");
-  return { configureClients, dryRun };
+  // Omitted entirely rather than defaulted, because an empty selection object would
+  // suppress the interactive prompts instead of falling through to them.
+  if (Object.keys(selections).length === 0) return { configureClients, dryRun };
+  return { configureClients, dryRun, selections };
 }
 
 const CLIENT_ENV_KEYS = new Set([
@@ -327,13 +352,15 @@ export async function doctorCommand(options = {}) {
 
 function helpText() {
   return [
-    "ticket-analyzer-mcp 2.3.1",
+    "ticket-analyzer-mcp 3.0.0",
     "",
     "Usage:",
     "  ticket-analyzer-mcp              Start the MCP server over stdio",
     "  ticket-analyzer-mcp setup        Plan and confirm project-scoped provider and client setup",
     "      --configure-clients          Compatibility alias for unified setup",
-    "      --dry-run                     Show the complete redacted plan without prompts or mutations",
+    "      --providers a,b               Select providers up front (trello, jira, azure)",
+    "      --clients a,b                 Select clients up front (claude, codex, pi)",
+    "      --dry-run                     Show the complete redacted plan without mutations; needs the flags above",
     "  ticket-analyzer-mcp doctor       Diagnose Node, .env, provider, and connection status",
     "  ticket-analyzer-mcp status       Check local provider configuration without network calls",
     "  ticket-analyzer-mcp --help       Show this help",

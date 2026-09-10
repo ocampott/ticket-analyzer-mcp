@@ -1,5 +1,33 @@
 # Changelog
 
+## [3.0.0] - 2026-09-10
+
+### Removed
+
+- **Breaking.** The Pi runtime no longer forwards provider credentials from its own process environment to the MCP child. It passes only `TICKET_ANALYZER_ENV_FILE`, and the server reads the credentials itself. Anyone who kept credentials only in a shell profile, never in a project `.env`, will now find the server unconfigured; write them to the project `.env` (`setup` does this) to restore it.
+- **Breaking.** `--configure-clients` no longer selects an opt-in wizard. It is accepted as an inert compatibility alias because `setup` always configures clients now.
+
+### Added
+
+- Added the unified setup manager: `setup` builds a complete plan, confirms it once, and then applies it in a fixed order (provider credentials, ignore rule, `claude`, `codex`, `pi`).
+- Added an ownership sidecar at `.ticket-analyzer/setup-state.json` that records what the manager created, written atomically and without credentials.
+- Added five-way discovery for every client — `owned`, `matching`, `foreign`, `absent`, `unknown` — where an unowned or unknown target stops the run instead of being overwritten.
+- Added `--providers` and `--clients` for selecting up front, which is also what makes `--dry-run` reachable from a shell; the manager requires explicit selections in that mode and will not prompt for them.
+- Added `--dry-run`, which reports the whole redacted plan and writes nothing.
+- Added a release guard that packs the tarball and fails when a module the binary imports is missing from `files`.
+
+### Fixed
+
+- Fixed the published package omitting `bin/setup-manager.js`, `bin/setup-adapters.js`, and `bin/setup-files.js`, which made every command of the installed binary fail with `ERR_MODULE_NOT_FOUND`.
+- Fixed a multi-provider `setup` run keeping only the last provider's `.env` edit instead of all of them.
+- Fixed the `.mcp.json` server key, renamed from `pm` to `ticket-analyzer`.
+
+### Changed
+
+- State is re-read before every operation, so a target reconfigured mid-run invalidates the confirmed plan rather than being overwritten.
+- A failed run performs no automatic rollback and reports exactly what completed, what failed, and what was never attempted; completed stages stay applied.
+- Setup never replaces an existing registration without an explicit decision. Codex trust, Pi package installation, and Claude marketplace/plugin actions remain deliberately manual.
+
 ## [2.3.1] - 2026-09-09
 
 ### Changed

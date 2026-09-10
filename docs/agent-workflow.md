@@ -7,7 +7,7 @@
 Install one machine-wide published CLI version:
 
 ```bash
-npm install --global ticket-analyzer-mcp@2.3.1
+npm install --global ticket-analyzer-mcp@3.0.0
 ```
 
 From the project that should own credentials, run:
@@ -16,15 +16,15 @@ From the project that should own credentials, run:
 ticket-analyzer-mcp setup
 ```
 
-Setup writes selected credentials to the ignored project-local `.env`, preserves unrelated keys, and never prints secrets. Users update the central version with `npm update --global ticket-analyzer-mcp`; reinstall an exact global version to pin it. The alternative `npm install ticket-analyzer-mcp@2.3.1` is isolated to one project.
+Setup writes selected credentials to the ignored project-local `.env`, preserves unrelated keys, and never prints secrets. Users update the central version with `npm update --global ticket-analyzer-mcp`; reinstall an exact global version to pin it. The alternative `npm install ticket-analyzer-mcp@3.0.0` is isolated to one project.
 
 Providers and clients are planned in one pass. Setup prints a complete, secret-free plan and asks for one confirmation covering the whole plan, then executes in a fixed order: the project `.env`, the ignore rule, then `claude`, `codex`, and `pi`.
 
 ```bash
-ticket-analyzer-mcp setup --dry-run
+ticket-analyzer-mcp setup --dry-run --providers trello,jira --clients claude,codex,pi
 ```
 
-`--dry-run` prints the same plan and writes nothing, spawning no child process. `--configure-clients` remains an accepted compatibility alias with no effect on dispatch.
+`--dry-run` prints the same plan and writes nothing, spawning no child process. It needs `--providers` and `--clients` because it never prompts; both accept comma-separated values (`trello`, `jira`, `azure` and `claude`, `codex`, `pi`), and either flag can also be used on its own to skip that prompt in a normal run. `--configure-clients` remains an accepted compatibility alias with no effect on dispatch.
 
 Before proposing a change, setup inspects the existing registration and classifies it as owned, matching, foreign, absent, or unknown. Adopting a matching registration or replacing a foreign one requires an explicit decision; removal requires explicit intent. An unknown state is never permission to act, and setup stops with manual recovery guidance instead of guessing.
 

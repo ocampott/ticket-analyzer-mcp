@@ -317,7 +317,7 @@ function formatWorkItemAsMarkdown(
 }
 
 const server = new Server(
-  { name: "ticket-analyzer-mcp", version: "2.3.1" },
+  { name: "ticket-analyzer-mcp", version: "3.0.0" },
   { capabilities: { tools: {} } }
 );
 

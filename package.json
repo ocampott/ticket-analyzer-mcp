@@ -1,6 +1,6 @@
 {
   "name": "ticket-analyzer-mcp",
-  "version": "2.3.1",
+  "version": "3.0.0",
   "description": "Client-neutral MCP server for Trello cards, Jira issues and Azure DevOps work items",
   "repository": {
     "type": "git",
@@ -37,6 +37,9 @@
     "!dist/**/*.test.*",
     "bin/pm-mcp.js",
     "bin/cli.js",
+    "bin/setup-manager.js",
+    "bin/setup-adapters.js",
+    "bin/setup-files.js",
     "extensions/ticket-analyzer.js",
     "skills/",
     "integrations/",

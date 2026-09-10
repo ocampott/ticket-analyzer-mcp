@@ -174,7 +174,7 @@ describe("setup manager PR 1 guardrails", () => {
   test("validates schema-v1 ownership facts without serializing secrets or stale roots", () => {
     const state = buildOwnershipState("/repo", {
       claude: { registrationId: "ticket-analyzer", scope: "project", command: "ticket-analyzer-mcp", envFile: "/repo/.env" },
-      pi: { settingsPath: ".pi/settings.json", packageName: "ticket-analyzer-mcp", packageSpec: "npm:ticket-analyzer-mcp@2.3.1", scope: "local", environmentBinding: "runtime-cwd-env" },
+      pi: { settingsPath: ".pi/settings.json", packageName: "ticket-analyzer-mcp", packageSpec: "npm:ticket-analyzer-mcp@3.0.0", scope: "local", environmentBinding: "runtime-cwd-env" },
     });
     const serialized = JSON.stringify(state);
     expect(serialized).not.toMatch(/secret|token|password|process\\.env/i);
@@ -186,9 +186,9 @@ describe("setup manager PR 1 guardrails", () => {
 
   test("classifies Pi disagreement as unknown and persists only after success", async () => {
     const state = buildOwnershipState("/repo", {
-      pi: { settingsPath: ".pi/settings.json", packageName: "ticket-analyzer-mcp", packageSpec: "npm:ticket-analyzer-mcp@2.3.1", scope: "local", environmentBinding: "runtime-cwd-env" },
+      pi: { settingsPath: ".pi/settings.json", packageName: "ticket-analyzer-mcp", packageSpec: "npm:ticket-analyzer-mcp@3.0.0", scope: "local", environmentBinding: "runtime-cwd-env" },
     });
-    const observed = { settingsPath: ".pi/settings.json", packageName: "ticket-analyzer-mcp", packageSpec: "npm:ticket-analyzer-mcp@2.3.1", scope: "local", environmentBinding: "runtime-cwd-env" };
+    const observed = { settingsPath: ".pi/settings.json", packageName: "ticket-analyzer-mcp", packageSpec: "npm:ticket-analyzer-mcp@3.0.0", scope: "local", environmentBinding: "runtime-cwd-env" };
     expect(classifyOwnership({ client: "pi", state, observed })).toMatchObject({ classification: "owned" });
     expect(classifyOwnership({ client: "pi", state, observed: { ...observed, packageSpec: "npm:ticket-analyzer-mcp@1.0.0" } })).toMatchObject({ classification: "unknown" });
     expect(classifyOwnership({ client: "pi", observed: { absent: true } })).toMatchObject({ classification: "absent" });
@@ -643,7 +643,7 @@ describe("setup manager PR 1 guardrails", () => {
 
   describe("PR 7 Pi project-local inspection boundary", () => {
     const root = "/repo";
-    const version = "2.3.1";
+    const version = "3.0.0";
     const spec = `npm:ticket-analyzer-mcp@${version}`;
     const settings = (local) => JSON.stringify({ version: 1, packages: { local } });
     const piFacts = { settingsPath: PI_SETTINGS_RELATIVE_PATH, packageName: "ticket-analyzer-mcp", packageSpec: spec, scope: "local", environmentBinding: "runtime-cwd-env" };
@@ -668,8 +668,8 @@ describe("setup manager PR 1 guardrails", () => {
       ["an unrecognized collection layout", JSON.stringify({ version: 1, packages: { global: [] } })],
       ["an unexpected top-level key", JSON.stringify({ version: 1, packages: { local: [] }, extra: true })],
       ["a malformed entry", JSON.stringify({ version: 1, packages: { local: [{ name: "ticket-analyzer-mcp" }] } })],
-      ["an aliased entry", JSON.stringify({ version: 1, packages: { local: [{ name: "ta", spec: "npm:ticket-analyzer-mcp@2.3.1" }] } })],
-      ["duplicate target identities", JSON.stringify({ version: 1, packages: { local: [{ name: "ticket-analyzer-mcp", spec: "npm:ticket-analyzer-mcp@2.3.1" }, { name: "ticket-analyzer-mcp", spec: "npm:ticket-analyzer-mcp@1.0.0" }] } })],
+      ["an aliased entry", JSON.stringify({ version: 1, packages: { local: [{ name: "ta", spec: "npm:ticket-analyzer-mcp@3.0.0" }] } })],
+      ["duplicate target identities", JSON.stringify({ version: 1, packages: { local: [{ name: "ticket-analyzer-mcp", spec: "npm:ticket-analyzer-mcp@3.0.0" }, { name: "ticket-analyzer-mcp", spec: "npm:ticket-analyzer-mcp@1.0.0" }] } })],
     ])("treats %s as unknown and exits safely", async (_case, content) => {
       const discovery = await adapterFor(content).discover({ root });
       expect(discovery).toMatchObject({ classification: "unknown", recovery: PI_MANUAL_RECOVERY });

@@ -11,7 +11,7 @@ Client-neutral MCP server for reading, searching, and analyzing Trello, Jira, an
 Desde cualquier proyecto consumidor, instalá una sola versión global para toda la máquina:
 
 ```bash
-npm install --global ticket-analyzer-mcp@2.3.1
+npm install --global ticket-analyzer-mcp@3.0.0
 ```
 
 Usá el wizard y los comandos publicados desde el proyecto que debe conservar las credenciales:
@@ -31,10 +31,10 @@ ticket-analyzer-mcp
 
 ```bash
 ticket-analyzer-mcp setup
-ticket-analyzer-mcp setup --dry-run
+ticket-analyzer-mcp setup --dry-run --providers trello,jira --clients claude,codex,pi
 ```
 
-`--dry-run` muestra el mismo plan y no escribe nada ni ejecuta ningún proceso hijo. `--configure-clients` se sigue aceptando como alias de compatibilidad, pero ya no cambia nada: la configuración de clientes es parte del flujo normal.
+`--dry-run` muestra el mismo plan y no escribe nada ni ejecuta ningún proceso hijo. Necesita `--providers` y `--clients` porque nunca pregunta; ambos aceptan valores separados por coma (`trello`, `jira`, `azure` y `claude`, `codex`, `pi`), y cualquiera de los dos se puede usar solo para saltear esa pregunta en una corrida normal. `--configure-clients` se sigue aceptando como alias de compatibilidad, pero ya no cambia nada: la configuración de clientes es parte del flujo normal.
 
 Antes de proponer cada cambio, el manager inspecciona lo que ya existe y lo clasifica como propio, coincidente, ajeno, ausente o desconocido. Adoptar un registro coincidente o reemplazar uno ajeno requiere una decisión explícita, y eliminar algo requiere pedirlo explícitamente. Un estado desconocido nunca habilita una acción: el manager frena y explica cómo recuperarlo a mano.
 
@@ -52,14 +52,14 @@ Para actualizar la versión central:
 npm update --global ticket-analyzer-mcp
 ```
 
-Para fijar otra versión central, reinstalala con una versión exacta, por ejemplo `npm install --global ticket-analyzer-mcp@2.3.1`.
+Para fijar otra versión central, reinstalala con una versión exacta, por ejemplo `npm install --global ticket-analyzer-mcp@3.0.0`.
 
 ### Comparación de alcance
 
 - Sin `--global`: versión aislada por proyecto.
 - Con `--global`: una versión central para toda la máquina.
 
-La alternativa aislada es instalar explícitamente en un proyecto: `npm install ticket-analyzer-mcp@2.3.1`. No es la instalación recomendada para usuarios que deben compartir una versión central.
+La alternativa aislada es instalar explícitamente en un proyecto: `npm install ticket-analyzer-mcp@3.0.0`. No es la instalación recomendada para usuarios que deben compartir una versión central.
 
 ### Configuración manual
 
@@ -78,7 +78,7 @@ Flujo recomendado: **analizá** el ticket y la evidencia → **pedí un plan** �
 Install one machine-wide version for all projects:
 
 ```bash
-npm install --global ticket-analyzer-mcp@2.3.1
+npm install --global ticket-analyzer-mcp@3.0.0
 ```
 
 Run setup and the published commands from the project that owns the credentials:
@@ -96,7 +96,7 @@ Update the central version with:
 npm update --global ticket-analyzer-mcp
 ```
 
-For a central version pin, install the exact version again, such as `npm install --global ticket-analyzer-mcp@2.3.1`. The project-local alternative is `npm install ticket-analyzer-mcp@2.3.1`; it affects only that project.
+For a central version pin, install the exact version again, such as `npm install --global ticket-analyzer-mcp@3.0.0`. The project-local alternative is `npm install ticket-analyzer-mcp@3.0.0`; it affects only that project.
 
 - Without --global: version isolated per project.
 - With --global: one central version for the whole machine.
@@ -107,10 +107,10 @@ For a central version pin, install the exact version again, such as `npm install
 
 ```bash
 ticket-analyzer-mcp setup
-ticket-analyzer-mcp setup --dry-run
+ticket-analyzer-mcp setup --dry-run --providers trello,jira --clients claude,codex,pi
 ```
 
-`--dry-run` prints the same plan and writes nothing, spawning no child process. `--configure-clients` is still accepted as a compatibility alias, but it no longer changes anything: client configuration is part of the normal flow.
+`--dry-run` prints the same plan and writes nothing, spawning no child process. It needs `--providers` and `--clients` because it never prompts; both accept comma-separated values (`trello`, `jira`, `azure` and `claude`, `codex`, `pi`), and either flag can also be used on its own to skip that prompt in a normal run. `--configure-clients` is still accepted as a compatibility alias, but it no longer changes anything: client configuration is part of the normal flow.
 
 Before proposing a change, the manager inspects what already exists and classifies it as owned, matching, foreign, absent, or unknown. Adopting a matching registration or replacing a foreign one takes an explicit decision, and removing anything has to be asked for explicitly. An unknown state is never permission to act: the manager stops and explains how to recover by hand.
 
