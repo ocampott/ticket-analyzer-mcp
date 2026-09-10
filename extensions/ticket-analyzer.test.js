@@ -1,4 +1,5 @@
 import { jest } from "@jest/globals";
+import path from "node:path";
 import {
   confirmToolCall,
   getTicketEnvironment,
@@ -8,19 +9,38 @@ import {
 } from "./ticket-analyzer.js";
 
 describe("ticket-analyzer Pi extension helpers", () => {
-  test("forwards only ticket credentials to the child environment", () => {
+  test("forwards the env-file binding and no provider credential", () => {
     const env = getTicketEnvironment({
-      TRELLO_API_KEY: "trello-key",
-      JIRA_API_TOKEN: "jira-token",
-      PATH: "/should/not/be-forwarded",
-      SECRET: "should-not-be-forwarded",
+      source: {
+        TICKET_ANALYZER_ENV_FILE: "/workspace/project/.env",
+        TRELLO_API_KEY: "trello-key",
+        TRELLO_TOKEN: "trello-token",
+        JIRA_API_TOKEN: "jira-token",
+        AZURE_DEVOPS_PAT: "azure-pat",
+        PATH: "/should/not/be-forwarded",
+        SECRET: "should-not-be-forwarded",
+      },
+      cwd: "/workspace/project",
     });
 
-    expect(env).toEqual({
-      TRELLO_API_KEY: "trello-key",
-      JIRA_API_TOKEN: "jira-token",
-    });
-    expect(env.PATH).toBeUndefined();
+    expect(env).toEqual({ TICKET_ANALYZER_ENV_FILE: "/workspace/project/.env" });
+  });
+
+  test("falls back to the absolute project .env only when Pi supplied no binding", () => {
+    expect(getTicketEnvironment({ source: {}, cwd: "/workspace/project" }))
+      .toEqual({ TICKET_ANALYZER_ENV_FILE: path.join("/workspace/project", ".env") });
+    expect(getTicketEnvironment({ source: { TICKET_ANALYZER_ENV_FILE: "/elsewhere/team.env" }, cwd: "/workspace/project" }))
+      .toEqual({ TICKET_ANALYZER_ENV_FILE: "/elsewhere/team.env" });
+  });
+
+  test("resolves a relative binding and a relative cwd against an absolute path", () => {
+    const relative = getTicketEnvironment({ source: { TICKET_ANALYZER_ENV_FILE: "config/team.env" }, cwd: "/workspace/project" });
+    expect(path.isAbsolute(relative.TICKET_ANALYZER_ENV_FILE)).toBe(true);
+    expect(relative.TICKET_ANALYZER_ENV_FILE).toBe(path.join("/workspace/project", "config", "team.env"));
+  });
+
+  test("omits the binding when no working directory is known", () => {
+    expect(getTicketEnvironment({ source: {}, cwd: undefined })).toEqual({});
   });
 
   test("keeps the discovered MCP JSON schema unchanged", () => {
