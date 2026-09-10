@@ -96,20 +96,6 @@ const CLIENT_CHOICES = [
   { name: "Pi", value: "pi" },
 ];
 const CLIENT_LABELS = { claude: "Claude Code", codex: "OpenAI Codex", pi: "Pi" };
-const CLIENT_EXECUTABLES = { claude: "claude", codex: "codex", pi: "pi" };
-const CLIENT_RESTART_GUIDANCE = {
-  claude: "Restart Claude Code after the commands complete.",
-  codex: "Restart Codex after registration.",
-  pi: "Restart or reload Pi after installation.",
-};
-const CLIENT_COMMANDS = {
-  claude: () => [],
-  codex: (filePath) => [
-    ["mcp", "add", "ticket-analyzer", "--env", `${ENV_FILE_VARIABLE}=${filePath}`, "--", "ticket-analyzer-mcp"],
-  ],
-  pi: () => [["install", "-l", "npm:ticket-analyzer-mcp@2.3.1"]],
-};
-
 export function parseSetupArgs(args) {
   const seen = new Set();
   for (const arg of args) {
@@ -350,100 +336,9 @@ async function loadCommandEnvironment(options) {
   return { env, values, filePath, file };
 }
 
-function readableArg(value) {
-  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(value) ? value : shellQuote(value);
-}
-
-function readableCommand(executable, args) {
-  return [executable, ...args].map(readableArg).join(" ");
-}
-
-function secretValuesFrom(values) {
-  return Object.values(values).filter(nonEmpty);
-}
-
-async function configureSelectedClients({ clients, filePath, cwd, env, finalValues, options, promptAdapter, stdout, stderr }) {
-  const resolve = options.resolveExecutable ?? ((name) => resolveExecutable(name, env, cwd));
-  const commandRunner = options.runCommand ?? runCommand;
-  const available = new Map();
-  const plan = [];
-  for (const client of clients) {
-    const executable = CLIENT_EXECUTABLES[client];
-    let resolved;
-    try {
-      resolved = await resolve(executable);
-    } catch (error) {
-      resolved = null;
-      plan.push({ client, executable, commands: CLIENT_COMMANDS[client](filePath), detectionError: error });
-      continue;
-    }
-    const commands = CLIENT_COMMANDS[client](filePath);
-    plan.push({ client, executable, commands, resolved });
-    if (resolved) available.set(client, { executable, resolved, commands });
-  }
-
-  writeOutput(stdout, "Client configuration plan:");
-  for (const item of plan) {
-    const status = item.resolved ? "available" : "unavailable";
-    writeOutput(stdout, `- ${status} — ${CLIENT_LABELS[item.client]}`);
-    for (const args of item.commands) writeOutput(stdout, `  Command: ${readableCommand(item.executable, args)}`);
-    if (!item.resolved) {
-      const manualAction = process.platform === "win32"
-        ? "  Manual action: install a direct .exe client; .cmd/.bat shims are unsupported with shell:false, then rerun setup with --configure-clients."
-        : "  Manual action: install or enable this client, then rerun setup with --configure-clients.";
-      writeOutput(stdout, manualAction);
-    }
-    writeOutput(stdout, `  Restart: ${CLIENT_RESTART_GUIDANCE[item.client]}`);
-  }
-  if (options.dryRun) {
-    writeOutput(stdout, "Dry-run: does not configure clients; no confirmations or client commands are executed.");
-    return 0;
-  }
-
-  const secretValues = secretValuesFrom(finalValues);
-  let failed = false;
-  for (const client of clients) {
-    if (client === "claude") {
-      writeOutput(stdout, "Claude marketplace and plugin actions remain manual; setup manages only the project MCP registration.");
-      continue;
-    }
-    const target = available.get(client);
-    if (!target) continue;
-    const confirmed = await promptAdapter.confirmClient({
-      client,
-      label: CLIENT_LABELS[client],
-      commands: target.commands,
-      message: `Configure ${CLIENT_LABELS[client]} now?`,
-    });
-    if (!confirmed) {
-      writeOutput(stdout, `Declined ${CLIENT_LABELS[client]}; no client commands were executed.`);
-      continue;
-    }
-    try {
-      for (const args of target.commands) {
-        await commandRunner(target.resolved, args, {
-          cwd,
-          shell: false,
-          clientEnv: deriveClientEnvironment(env),
-          secretValues,
-          timeoutMs: options.timeoutMs,
-          spawnProcess: options.spawnProcess,
-        });
-      }
-      writeOutput(stdout, `Configured ${CLIENT_LABELS[client]}.`);
-    } catch (error) {
-      failed = true;
-      const detail = redactSecretLikeValues(error instanceof Error ? error.message : String(error), secretValues);
-      writeOutput(stderr, `${CLIENT_LABELS[client]} configuration failed: ${detail}`);
-    }
-  }
-  return failed ? 1 : 0;
-}
-
 async function legacySetupCommand(options = {}) {
   const stdin = options.stdin ?? process.stdin;
   const stdout = options.stdout ?? process.stdout;
-  const stderr = options.stderr ?? process.stderr;
   if (!stdin.isTTY) {
     writeOutput(stdout, "Setup requires an interactive terminal. Run `ticket-analyzer-mcp setup` from a TTY.");
     throw new Error("Setup requires an interactive terminal; refusing to read credentials from non-TTY stdin.");
@@ -489,18 +384,6 @@ async function legacySetupCommand(options = {}) {
     const clients = parseClients(await promptAdapter.client());
     if (clients.length === 0) {
       writeOutput(stdout, "Credentials are ready locally but no agent client has been configured yet.");
-    } else if (options.configureClients) {
-      return await configureSelectedClients({
-        clients,
-        filePath,
-        cwd,
-        env,
-        finalValues,
-        options,
-        promptAdapter,
-        stdout,
-        stderr,
-      });
     } else {
       writeOutput(stdout, "Next steps (setup does not execute client CLIs or change client settings):");
       for (const client of clients) {
