@@ -27,7 +27,17 @@ ticket-analyzer-mcp setup --configure-clients
 ticket-analyzer-mcp setup --configure-clients --dry-run
 ```
 
-Normal mode detects available clients, prints one non-secret plan, and asks for one confirmation per selected available client. It executes only confirmed clients, using a limited environment without provider credentials. `--dry-run` prints the same plan without confirmations or child processes; it may write `.env` when providers are selected. The legacy `ticket-analyzer-mcp setup` remains credential-only. The wizard does not inspect, replace, or remove existing Codex registrations; update registrations manually when needed and restart Codex after configuration or updates. On Windows, `shell: false` cannot use `.cmd` or `.bat` shims; a direct executable is required.
+Normal mode detects available clients, prints one non-secret plan, and asks for one confirmation per selected available client. It executes only confirmed clients, using a limited environment without provider credentials. `--dry-run` prints the same plan without confirmations or child processes; it may write `.env` when providers are selected. The legacy `ticket-analyzer-mcp setup` remains credential-only. On Windows, `shell: false` cannot use `.cmd` or `.bat` shims; a direct executable is required.
+
+### Codex project trust is your responsibility
+
+Setup never reads, creates, or changes any Codex trust setting, and never inspects `$CODEX_HOME` or any file in your home directory. Mark the project as trusted from Codex itself before selecting the Codex integration; setup asks you to confirm that you did, and treats your answer as an assertion it does not verify. Without that confirmation Codex is reported as blocked and nothing is written, while any other selected operation keeps its own place in the plan.
+
+### What setup owns in `.codex/config.toml`
+
+Setup reconciles exactly one entry: the `[mcp_servers.ticket-analyzer]` table in the project's own `.codex/config.toml`, together with its `[mcp_servers.ticket-analyzer.env]` subtable, bound to the absolute project `.env` path. Every byte outside that entry is preserved, and the exact textual diff appears in the plan before you confirm it.
+
+An entry that already matches must be adopted explicitly, and a conflicting one must be replaced explicitly. Replacing rewrites the targeted entry from its canonical form, so comments and formatting inside that entry are discarded. Whenever the entry cannot be targeted without ambiguity — a duplicate table, an array of tables, a malformed header, an unterminated or multiline value, or an `.env` subtable that is not adjacent to its table — setup reports Codex as blocked and changes nothing, leaving the file for you to reconcile by hand. `AGENTS.md` is never created, merged, or modified.
 
 Register the global server binary with Codex:
 

@@ -2,13 +2,15 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { lstat as nativeLstat, readFile as nativeReadFile, realpath as nativeRealpath } from "node:fs/promises";
 import {
+  CODEX_RELATIVE_CONFIG_PATH,
   ENV_PRECEDENCE_WARNING,
   PROVIDER_ENV_VARS,
   editProviderEnv,
   inspectSidecarIgnoreRuleFile,
   resolveManagedEnvPath,
+  validateProjectPath,
 } from "./setup-files.js";
-import { ClaudeAdapter, inspectClaudeProjectConfig } from "./setup-adapters.js";
+import { ClaudeAdapter, CodexAdapter, inspectClaudeProjectConfig } from "./setup-adapters.js";
 
 const notFound = (error) => error?.code === "ENOENT";
 const nativeFilesystem = { lstat: nativeLstat, realpath: nativeRealpath, readFile: nativeReadFile };
@@ -339,12 +341,29 @@ function writeOutput(stdout, text) {
 
 function clientAdapter(client, adapters, dependencies) {
   if (adapters?.[client]) return adapters[client];
+  if (client === "codex") {
+    return new CodexAdapter({
+      readConfig: dependencies.readCodexConfig ?? ((context) => readCodexProjectConfig({ ...context, filesystem: dependencies.filesystem })),
+      writeConfig: dependencies.writeCodexConfig,
+    });
+  }
   if (client !== "claude") return null;
   return new ClaudeAdapter({
     resolveExecutable: dependencies.resolveExecutable,
     runCommand: dependencies.runCommand,
     inspectProjectConfig: dependencies.inspectProjectConfig ?? ((context) => inspectClaudeProjectConfig({ ...context, filesystem: dependencies.filesystem })),
   });
+}
+
+async function readCodexProjectConfig({ root, filesystem = nativeFilesystem }) {
+  const target = path.join(root, CODEX_RELATIVE_CONFIG_PATH);
+  await validateProjectPath(root, target, filesystem);
+  try {
+    return String(await (filesystem.readFile ?? nativeReadFile)(target, "utf8"));
+  } catch (error) {
+    if (notFound(error)) return "";
+    throw error;
+  }
 }
 
 async function discoverClientOperations({
@@ -354,6 +373,7 @@ async function discoverClientOperations({
   environment = {},
   decisions = {},
   intents = {},
+  acknowledgements = {},
   adapters = {},
   dependencies = {},
 } = {}) {
@@ -370,13 +390,13 @@ async function discoverClientOperations({
     }
     let discovery;
     try {
-      discovery = await adapter.discover({ root, state, environment });
+      discovery = await adapter.discover({ root, state, environment, acknowledgement: acknowledgements[client] });
     } catch {
       blockedOperations.push({ client, reason: "Client discovery failed safely; recover the project registration manually." });
       continue;
     }
     discoveries[client] = discovery;
-    const operation = adapter.buildOperation({ discovery, decision: decisions[client], intent: intents[client] ?? "add" });
+    const operation = adapter.buildOperation({ discovery, decision: decisions[client], intent: intents[client] ?? "add", acknowledgement: acknowledgements[client] });
     if (operation?.blocked) {
       blockedOperations.push({ client, reason: operation.reason ?? discovery?.reason ?? "Client operation is unavailable." });
       continue;
@@ -479,11 +499,14 @@ export async function setupCommand(options = {}) {
       environment: options.environment ?? options.env ?? process.env,
       decisions: options.decisions,
       intents: options.clientIntents,
+      acknowledgements: options.acknowledgements,
       adapters: options.adapters,
       dependencies: {
         resolveExecutable: options.resolveExecutable,
         runCommand: options.runCommand,
         inspectProjectConfig: options.inspectProjectConfig,
+        readCodexConfig: options.readCodexConfig,
+        writeCodexConfig: options.writeCodexConfig,
         filesystem,
         ensureIgnoreRule: options.ensureIgnoreRule,
         writeOwnership: options.writeOwnership,
