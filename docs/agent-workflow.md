@@ -27,6 +27,10 @@ ticket-analyzer-mcp setup --configure-clients --dry-run
 
 Normal mode detects `claude`, `codex`, and `pi` on `PATH`, prints one non-secret plan, and asks once per selected available client before executing its create/install commands. Client CLIs run with a limited environment and no provider credentials. Unavailable or declined clients are nonfatal. `--dry-run` prints the same plan without confirmation or child execution, but may write `.env` if providers are selected. Legacy `setup` remains credential-only. The wizard does not inspect, replace, or remove existing client registrations; users must update those manually and restart the relevant client after configuration or updates. On Windows, `shell: false` cannot use `.cmd` or `.bat` shims; a direct executable is required.
 
+### Claude project MCP boundary
+
+The manager owns only the `ticket-analyzer` project-scope MCP registration and gives it the absolute project `.env` binding. Claude marketplace and plugin actions, and all `AGENTS.md` changes, are manual responsibilities that the manager never invokes or records.
+
 Use the direct binary for the standalone server and diagnostics:
 
 ```bash
