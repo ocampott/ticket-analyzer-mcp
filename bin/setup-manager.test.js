@@ -6,6 +6,18 @@ import {
   prepareAtomicWrite,
   resolveManagedEnvPath,
   validateProjectPath,
+  buildOwnershipState,
+  validateOwnershipState,
+  parseOwnershipState,
+  serializeOwnershipState,
+  readOwnershipState,
+  writeOwnershipState,
+  persistOwnershipAfterSuccess,
+  classifyOwnership,
+  SIDECAR_IGNORE_RULE,
+  inspectSidecarIgnoreRule,
+  planSidecarIgnoreRule,
+  inspectSidecarIgnoreRuleFile,
 } from "./setup-files.js";
 import { resolveProjectRoot } from "./setup-manager.js";
 
@@ -123,5 +135,92 @@ describe("setup manager PR 1 guardrails", () => {
 
   test("requires a real directory root for file-path validation", async () => {
     await expect(validateProjectPath("/repo", "/repo/.env", memoryFs({ "/repo": "file" }))).rejects.toThrow(/not a directory/i);
+  });
+
+  test("validates schema-v1 ownership facts without serializing secrets or stale roots", () => {
+    const state = buildOwnershipState("/repo", {
+      claude: { registrationId: "ticket-analyzer", scope: "project", command: "ticket-analyzer-mcp", envFile: "/repo/.env" },
+      pi: { settingsPath: ".pi/settings.json", packageName: "ticket-analyzer-mcp", packageSpec: "npm:ticket-analyzer-mcp@2.3.1", scope: "local", environmentBinding: "runtime-cwd-env" },
+    });
+    const serialized = JSON.stringify(state);
+    expect(serialized).not.toMatch(/secret|token|password|process\\.env/i);
+    expect(validateOwnershipState(state, "/repo")).toMatchObject({ safe: true });
+    expect(validateOwnershipState(state, "/other")).toMatchObject({ safe: false });
+    expect(validateOwnershipState({ ...state, clients: { claude: { ...state.clients.claude, envFile: "/tmp/secret.env" } } }, "/repo")).toMatchObject({ safe: false });
+    expect(parseOwnershipState('{"schemaVersion":1,"projectRoot":"/repo","clients":{"pi":{},"pi":{}}}', "/repo")).toMatchObject({ safe: false });
+  });
+
+  test("classifies Pi disagreement as unknown and persists only after success", async () => {
+    const state = buildOwnershipState("/repo", {
+      pi: { settingsPath: ".pi/settings.json", packageName: "ticket-analyzer-mcp", packageSpec: "npm:ticket-analyzer-mcp@2.3.1", scope: "local", environmentBinding: "runtime-cwd-env" },
+    });
+    const observed = { settingsPath: ".pi/settings.json", packageName: "ticket-analyzer-mcp", packageSpec: "npm:ticket-analyzer-mcp@2.3.1", scope: "local", environmentBinding: "runtime-cwd-env" };
+    expect(classifyOwnership({ client: "pi", state, observed })).toMatchObject({ classification: "owned" });
+    expect(classifyOwnership({ client: "pi", state, observed: { ...observed, packageSpec: "npm:ticket-analyzer-mcp@1.0.0" } })).toMatchObject({ classification: "unknown" });
+    expect(classifyOwnership({ client: "pi", observed: { absent: true } })).toMatchObject({ classification: "absent" });
+    expect(classifyOwnership({ client: "pi", state, observed: { absent: true } })).toMatchObject({ classification: "unknown" });
+    const writes = [];
+    await expect(persistOwnershipAfterSuccess({ action: { success: false }, state, write: async () => writes.push("write") })).resolves.toMatchObject({ updated: false });
+    expect(writes).toEqual([]);
+    await expect(persistOwnershipAfterSuccess({ action: { success: true }, state, write: async (next) => writes.push(next) })).resolves.toMatchObject({ updated: true });
+    expect(writes).toHaveLength(1);
+  });
+
+  test("rejects symlinked sidecars and atomically fails before rename", async () => {
+    const state = buildOwnershipState("/repo", {});
+    const symlinkFs = memoryFs({ "/repo": "dir", "/repo/.ticket-analyzer": "dir", "/repo/.ticket-analyzer/setup-state.json": "link" });
+    await expect(readOwnershipState({ root: "/repo", filesystem: symlinkFs })).rejects.toThrow(/symlink/i);
+    const calls = [];
+    const entries = { "/repo": "dir" };
+    const filesystem = {
+      ...memoryFs(entries),
+      async mkdir(target) { calls.push("mkdir"); entries[target] = "dir"; },
+      async open() { calls.push("open"); throw new Error("disk full"); },
+      async rename() { calls.push("rename"); },
+    };
+    await expect(writeOwnershipState({ root: "/repo", state, filesystem, tempPath: "/repo/.ticket-analyzer/setup-state.json.tmp" })).rejects.toThrow(/disk full/);
+    expect(calls).not.toContain("rename");
+
+    const successfulCalls = [];
+    const successfulFs = {
+      ...memoryFs({ "/repo": "dir", "/repo/.ticket-analyzer": "dir" }),
+      async readFile() { throw ENOENT(); },
+      async open(target, flags, mode) {
+        successfulCalls.push(`open:${target}:${flags}:${mode.toString(8)}`);
+        return { writeFile: async (content) => successfulCalls.push(`write:${content.endsWith("\n")}`), sync: async () => successfulCalls.push("fsync"), chmod: async () => successfulCalls.push("chmod"), close: async () => successfulCalls.push("close") };
+      },
+      async rename() { successfulCalls.push("rename"); },
+      async fsyncDirectory() { successfulCalls.push("directory-fsync"); },
+    };
+    await expect(writeOwnershipState({ root: "/repo", state, filesystem: successfulFs, before: null, tempPath: "/repo/.ticket-analyzer/setup-state.json.tmp" })).resolves.toMatchObject({ safe: true, target: "/repo/.ticket-analyzer/setup-state.json" });
+    expect(serializeOwnershipState(state)).toMatch(/}\n$/);
+    expect(successfulCalls).toEqual(["open:/repo/.ticket-analyzer/setup-state.json.tmp:wx:600", "write:true", "fsync", "chmod", "close", "rename", "directory-fsync"]);
+  });
+
+  test("validates the sidecar root and target before creating its directory", async () => {
+    const state = buildOwnershipState("/repo", {});
+    for (const rootKind of ["link", "file"]) {
+      const calls = [];
+      const filesystem = {
+        ...memoryFs({ "/repo": rootKind }),
+        async mkdir() { calls.push("mkdir"); },
+      };
+      await expect(writeOwnershipState({ root: "/repo", state, filesystem })).rejects.toThrow(rootKind === "link" ? /symlink/i : /not a directory/i);
+      expect(calls).toEqual([]);
+    }
+  });
+
+  test("plans only the exact root-sidecar ignore rule while preserving style", async () => {
+    expect(SIDECAR_IGNORE_RULE).toBe("/.ticket-analyzer/setup-state.json");
+    expect(inspectSidecarIgnoreRule(SIDECAR_IGNORE_RULE)).toMatchObject({ safe: true, action: "existing" });
+    expect(planSidecarIgnoreRule("keep\r\n")).toMatchObject({ safe: true, action: "append", after: `keep\r\n${SIDECAR_IGNORE_RULE}\r\n` });
+    expect(planSidecarIgnoreRule("keep")).toMatchObject({ safe: true, action: "append", after: `keep\n${SIDECAR_IGNORE_RULE}` });
+    expect(planSidecarIgnoreRule("keep\r\n").diff).toBe(`--- .gitignore\n+++ .gitignore\n@@ -1,1 +1,2 @@\n keep\n+${SIDECAR_IGNORE_RULE}`);
+    for (const ambiguous of ["!/.ticket-analyzer/setup-state.json\n", "*.json\n", ".ticket-analyzer/\n", "\\/.ticket-analyzer/setup-state.json\n", `${SIDECAR_IGNORE_RULE}\n${SIDECAR_IGNORE_RULE}\n`]) {
+      expect(inspectSidecarIgnoreRule(ambiguous)).toMatchObject({ safe: false });
+    }
+    const filesystem = memoryFs({ "/repo": "dir", "/repo/.gitignore": "file" });
+    await expect(inspectSidecarIgnoreRuleFile({ root: "/repo", filesystem, readFile: async () => "" })).resolves.toMatchObject({ safe: true, action: "append" });
+    await expect(inspectSidecarIgnoreRuleFile({ root: "/repo", filesystem: memoryFs({ "/repo": "dir", "/repo/.gitignore": "link" }), readFile: async () => "" })).rejects.toThrow(/symlink/i);
   });
 });
