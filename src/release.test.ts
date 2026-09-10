@@ -118,33 +118,44 @@ describe("2.3.1 release metadata and guidance", () => {
     expect(readme).not.toMatch(/ticket-analyzer-mcp\s+update\b/);
   });
 
-  test("publishes the bilingual opt-in client wizard guidance", () => {
+  test("publishes the bilingual unified setup guidance", () => {
     const readme = read("README.md");
 
-    expect(readme).toContain("### Configuración opt-in de clientes");
-    expect(readme).toContain("### Opt-in client configuration wizard");
-    expect(readme).toContain("ticket-analyzer-mcp setup --configure-clients");
-    expect(readme).toContain("ticket-analyzer-mcp setup --configure-clients --dry-run");
-    expect(readme).toMatch(/plan no secreto/i);
+    expect(readme).toContain("### Cómo funciona `setup`");
+    expect(readme).toContain("### How `setup` works");
+    expect(readme).toContain("ticket-analyzer-mcp setup --dry-run");
+    expect(readme).toMatch(/una sola confirmación para todo el plan/i);
+    expect(readme).toMatch(/one confirmation covering the whole plan/i);
     expect(readme).toMatch(/limited environment and no provider credentials/i);
-    expect(readme).toMatch(/may write `\.env` when providers are selected/i);
-    expect(readme).toMatch(/does not inspect, replace, or remove existing registrations/i);
+    expect(readme).toMatch(/alias de compatibilidad/i);
+    expect(readme).toMatch(/compatibility alias/i);
   });
 
-  test("puts the wizard before labeled manual recovery guidance", () => {
+  test("states the safety boundaries the manager actually keeps", () => {
     const readme = read("README.md");
-    const spanishWizard = readme.indexOf("### Configuración opt-in de clientes");
+
+    expect(readme).toMatch(/--dry-run` muestra el mismo plan y no escribe nada/i);
+    expect(readme).toMatch(/--dry-run` prints the same plan and writes nothing/i);
+    expect(readme).toMatch(/no revierte nada automáticamente/i);
+    expect(readme).toMatch(/rolls nothing back automatically/i);
+    expect(readme).toMatch(/propio, coincidente, ajeno, ausente o desconocido/i);
+    expect(readme).toMatch(/owned, matching, foreign, absent, or unknown/i);
+  });
+
+  test("puts the setup flow before labeled manual recovery guidance", () => {
+    const readme = read("README.md");
+    const spanishFlow = readme.indexOf("### Cómo funciona `setup`");
     const spanishManual = readme.indexOf("### Configuración manual");
-    const englishWizard = readme.indexOf("### Opt-in client configuration wizard");
+    const englishFlow = readme.indexOf("### How `setup` works");
     const englishManual = readme.indexOf("### Manual recovery");
 
-    expect(spanishWizard).toBeGreaterThanOrEqual(0);
-    expect(spanishManual).toBeGreaterThan(spanishWizard);
-    expect(englishWizard).toBeGreaterThanOrEqual(0);
-    expect(englishManual).toBeGreaterThan(englishWizard);
+    expect(spanishFlow).toBeGreaterThanOrEqual(0);
+    expect(spanishManual).toBeGreaterThan(spanishFlow);
+    expect(englishFlow).toBeGreaterThanOrEqual(0);
+    expect(englishManual).toBeGreaterThan(englishFlow);
     expect(readme).toMatch(/Configuración manual[\s\S]*cliente no está disponible[\s\S]*Codex/);
     expect(readme).toMatch(/Manual recovery[\s\S]*client is unavailable[\s\S]*Codex/);
-    expect(readme).toMatch(/wizard does not replace existing registrations/i);
+    expect(readme).toMatch(/never replaces an existing registration without an explicit decision/i);
   });
 
   test("keeps the release changelog current and historically ordered", () => {

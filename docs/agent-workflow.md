@@ -16,16 +16,19 @@ From the project that should own credentials, run:
 ticket-analyzer-mcp setup
 ```
 
-Setup writes selected credentials to the ignored project-local `.env`, preserves unrelated keys, and never modifies client configuration or prints secrets. Users update the central version with `npm update --global ticket-analyzer-mcp`; reinstall an exact global version to pin it. The alternative `npm install ticket-analyzer-mcp@2.3.1` is isolated to one project.
+Setup writes selected credentials to the ignored project-local `.env`, preserves unrelated keys, and never prints secrets. Users update the central version with `npm update --global ticket-analyzer-mcp`; reinstall an exact global version to pin it. The alternative `npm install ticket-analyzer-mcp@2.3.1` is isolated to one project.
 
-Client configuration is explicitly opt-in:
+Providers and clients are planned in one pass. Setup prints a complete, secret-free plan and asks for one confirmation covering the whole plan, then executes in a fixed order: the project `.env`, the ignore rule, then `claude`, `codex`, and `pi`.
 
 ```bash
-ticket-analyzer-mcp setup --configure-clients
-ticket-analyzer-mcp setup --configure-clients --dry-run
+ticket-analyzer-mcp setup --dry-run
 ```
 
-Normal mode detects `claude`, `codex`, and `pi` on `PATH`, prints one non-secret plan, and asks once per selected available client before executing its create/install commands. Client CLIs run with a limited environment and no provider credentials. Unavailable or declined clients are nonfatal. `--dry-run` prints the same plan without confirmation or child execution, but may write `.env` if providers are selected. Legacy `setup` remains credential-only. The wizard does not inspect, replace, or remove existing client registrations; users must update those manually and restart the relevant client after configuration or updates. On Windows, `shell: false` cannot use `.cmd` or `.bat` shims; a direct executable is required.
+`--dry-run` prints the same plan and writes nothing, spawning no child process. `--configure-clients` remains an accepted compatibility alias with no effect on dispatch.
+
+Before proposing a change, setup inspects the existing registration and classifies it as owned, matching, foreign, absent, or unknown. Adopting a matching registration or replacing a foreign one requires an explicit decision; removal requires explicit intent. An unknown state is never permission to act, and setup stops with manual recovery guidance instead of guessing.
+
+A failed stage stops the run with no automatic rollback; the result names the completed, failed, and unattempted stages so the resulting state is explicit. A blocked client leaves the others applicable. Client CLIs run with a limited environment and no provider credentials. On Windows, `shell: false` cannot use `.cmd` or `.bat` shims; a direct executable is required.
 
 ### Claude project MCP boundary
 
