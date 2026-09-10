@@ -350,25 +350,31 @@ describe("ticket-analyzer CLI", () => {
     expect(output.join(" ")).toMatch(/does not execute client CLIs/i);
   });
 
-  test("legacy setup keeps marketplace and plugin actions manual even when client configuration is requested", async () => {
+  test("requesting client configuration never prompts or executes per client", async () => {
     const output = [];
     const runCommand = jest.fn();
+    const confirmClient = jest.fn();
+
     await setupCommand({
       cwd: await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-")),
       env: {},
       stdin: { isTTY: true },
       stdout: { write: (text) => output.push(text) },
+      stderr: { write: (text) => output.push(text) },
       promptAdapter: {
         providers: jest.fn().mockResolvedValue([]),
-        client: jest.fn().mockResolvedValue(["claude"]),
-        confirmClient: jest.fn().mockResolvedValue(true),
+        client: jest.fn().mockResolvedValue(["claude", "codex", "pi"]),
+        confirmClient,
       },
       configureClients: true,
-      resolveExecutable: jest.fn().mockReturnValue("/bin/claude"),
+      resolveExecutable: jest.fn().mockImplementation((name) => `/bin/${name}`),
       runCommand,
     });
+
+    expect(confirmClient).not.toHaveBeenCalled();
     expect(runCommand).not.toHaveBeenCalled();
-    expect(output.join(" ")).toMatch(/marketplace.*manual|manual.*marketplace/i);
+    expect(output.join(" ")).toMatch(/does not execute client CLIs/i);
+    expect(output.join(" ")).toMatch(/marketplace/i);
   });
 
   test("setup dry-run delegates the unified manager instead of legacy client commands", async () => {
@@ -379,31 +385,6 @@ describe("ticket-analyzer CLI", () => {
     expect(setupManager).toHaveBeenCalledWith(expect.objectContaining({ configureClients: false, dryRun: true }));
   });
 
-  test("unavailable clients are reported without confirmation and remain nonfatal", async () => {
-    const output = [];
-    const promptAdapter = {
-      providers: jest.fn().mockResolvedValue([]),
-      client: jest.fn().mockResolvedValue(["codex"]),
-      confirmClient: jest.fn(),
-    };
-    const runCommand = jest.fn();
-
-    const result = await setupCommand({
-      cwd: await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-")),
-      env: {},
-      stdin: { isTTY: true },
-      stdout: { write: (text) => output.push(text) },
-      promptAdapter,
-      configureClients: true,
-      resolveExecutable: jest.fn().mockReturnValue(null),
-      runCommand,
-    });
-
-    expect(result).toBe(0);
-    expect(output.join(" ")).toMatch(/unavailable.*OpenAI Codex/i);
-    expect(promptAdapter.confirmClient).not.toHaveBeenCalled();
-    expect(runCommand).not.toHaveBeenCalled();
-  });
 
   test("setup compatibility alias delegates the same unified manager contract", async () => {
     const setupManager = jest.fn().mockResolvedValue(0);
@@ -413,72 +394,7 @@ describe("ticket-analyzer CLI", () => {
     expect(setupManager).toHaveBeenCalledWith(expect.objectContaining({ configureClients: true, dryRun: false }));
   });
 
-  test("continues after a client failure and returns nonzero", async () => {
-    const output = [];
-    const attempted = [];
-    const promptAdapter = {
-      providers: jest.fn().mockResolvedValue([]),
-      client: jest.fn().mockResolvedValue(["codex", "pi"]),
-      confirmClient: jest.fn().mockResolvedValue(true),
-    };
-    const runCommand = jest.fn(async (file) => {
-      attempted.push(file);
-      if (file === "/bin/codex") throw new Error("client failed");
-    });
 
-    const result = await setupCommand({
-      cwd: await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-")),
-      env: {},
-      stdin: { isTTY: true },
-      stdout: { write: (text) => output.push(text) },
-      stderr: { write: (text) => output.push(text) },
-      promptAdapter,
-      configureClients: true,
-      resolveExecutable: jest.fn().mockImplementation((name) => `/bin/${name}`),
-      runCommand,
-    });
-
-    expect(result).toBe(1);
-    expect(attempted).toEqual(["/bin/codex", "/bin/pi"]);
-    expect(output.join(" ")).toMatch(/OpenAI Codex.*failed/i);
-  });
-
-  test("redacts provider values in errors and quotes env paths in the plan", async () => {
-    const output = [];
-    const privateValue = ["provider", "value"].join("-");
-    const envFile = path.join(await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-")), "folder with spaces", "quote'and$path.env");
-    const promptAdapter = {
-      providers: jest.fn().mockResolvedValue([]),
-      client: jest.fn().mockResolvedValue(["codex"]),
-      confirmClient: jest.fn().mockResolvedValue(true),
-    };
-    const runCommand = jest.fn(async () => {
-      throw new Error(`failed with ${privateValue} and token=${privateValue}`);
-    });
-
-    const result = await setupCommand({
-      cwd: path.dirname(envFile),
-      env: { TICKET_ANALYZER_ENV_FILE: envFile, JIRA_API_TOKEN: privateValue },
-      stdin: { isTTY: true },
-      stdout: { write: (text) => output.push(text) },
-      stderr: { write: (text) => output.push(text) },
-      promptAdapter,
-      configureClients: true,
-      resolveExecutable: jest.fn().mockReturnValue("/bin/codex"),
-      runCommand,
-    });
-
-    const text = output.join(" ");
-    expect(result).toBe(1);
-    expect(text).toContain("quote'\\''and$path.env");
-    expect(runCommand).toHaveBeenCalledWith(
-      "/bin/codex",
-      ["mcp", "add", "ticket-analyzer", "--env", `TICKET_ANALYZER_ENV_FILE=${envFile}`, "--", "ticket-analyzer-mcp"],
-      expect.objectContaining({ shell: false }),
-    );
-    expect(text).not.toContain(privateValue);
-    expect(text).toContain("[redacted]");
-  });
 
   test("runCommand derives a client-safe environment and uses safe spawn options", async () => {
     const child = new EventEmitter();
@@ -523,97 +439,7 @@ describe("ticket-analyzer CLI", () => {
     );
   });
 
-  test("runCommand passes the Codex env-file path as an argument without child env leakage", async () => {
-    const cwd = await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-"));
-    const envFile = path.join(cwd, "folder with spaces", "project.env");
-    const output = [];
-    const promptAdapter = {
-      providers: jest.fn().mockResolvedValue([]),
-      client: jest.fn().mockResolvedValue(["codex"]),
-      confirmClient: jest.fn().mockResolvedValue(true),
-    };
-    const spawnProcess = jest.fn(() => {
-      const child = new EventEmitter();
-      child.stdout = new EventEmitter();
-      child.stderr = new EventEmitter();
-      queueMicrotask(() => child.emit("close", 0));
-      return child;
-    });
 
-    const result = await setupCommand({
-      cwd,
-      env: {
-        TICKET_ANALYZER_ENV_FILE: envFile,
-        JIRA_API_TOKEN: "provider-token",
-        PATH: "/safe/bin",
-        HOME: "/home/person",
-      },
-      stdin: { isTTY: true },
-      stdout: { write: (text) => output.push(text) },
-      promptAdapter,
-      configureClients: true,
-      resolveExecutable: jest.fn().mockReturnValue("/safe/bin/codex"),
-      spawnProcess,
-    });
-
-    expect(result).toBe(0);
-    expect(spawnProcess).toHaveBeenCalledTimes(1);
-    expect(spawnProcess.mock.calls[0][1]).toEqual([
-      "mcp", "add", "ticket-analyzer", "--env", `TICKET_ANALYZER_ENV_FILE=${envFile}`, "--", "ticket-analyzer-mcp",
-    ]);
-    expect(spawnProcess.mock.calls[0][2].env).toEqual({ PATH: "/safe/bin", HOME: "/home/person" });
-    expect(output.join(" ")).not.toContain("provider-token");
-  });
-
-  test("runCommand times out safely and setup continues with later clients", async () => {
-    jest.useFakeTimers();
-    try {
-      const children = [];
-      let resolveStarted;
-      const started = new Promise((resolve) => {
-        resolveStarted = resolve;
-      });
-      const spawnProcess = jest.fn(() => {
-        const child = new EventEmitter();
-        child.stdout = new EventEmitter();
-        child.stderr = new EventEmitter();
-        child.kill = jest.fn(() => true);
-        children.push(child);
-        if (children.length === 1) resolveStarted();
-        if (children.length > 1) queueMicrotask(() => child.emit("close", 0));
-        return child;
-      });
-      const output = [];
-      const promptAdapter = {
-        providers: jest.fn().mockResolvedValue([]),
-        client: jest.fn().mockResolvedValue(["codex", "pi"]),
-        confirmClient: jest.fn().mockResolvedValue(true),
-      };
-      const setupPromise = setupCommand({
-        cwd: await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-")),
-        env: {},
-        stdin: { isTTY: true },
-        stdout: { write: (text) => output.push(text) },
-        stderr: { write: (text) => output.push(text) },
-        promptAdapter,
-        configureClients: true,
-        timeoutMs: 25,
-        resolveExecutable: jest.fn().mockImplementation((name) => `/bin/${name}`),
-        spawnProcess,
-      });
-
-      await started;
-      await jest.advanceTimersByTimeAsync(25);
-      const result = await setupPromise;
-      expect(result).toBe(1);
-      expect(children[0].kill).toHaveBeenCalledTimes(1);
-      expect(spawnProcess).toHaveBeenCalledTimes(2);
-      expect(spawnProcess.mock.calls[1][1][0]).toBe("install");
-      expect(output.join(" ")).toMatch(/timed out after 25ms/i);
-    } finally {
-      jest.useRealTimers();
-    }
-  });
 
   // The runner hardening below is asserted at the runCommand boundary rather than through a
   // setup path, so the guarantees survive whichever caller drives the child process.
