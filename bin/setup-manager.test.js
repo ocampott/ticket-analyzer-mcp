@@ -35,7 +35,7 @@ import {
   resolveProjectRoot,
   setupCommand,
 } from "./setup-manager.js";
-import { ClaudeAdapter, inspectClaudeProjectConfig, renderClaudeOperation } from "./setup-adapters.js";
+import { ClaudeAdapter, CodexAdapter, inspectClaudeProjectConfig, renderClaudeOperation } from "./setup-adapters.js";
 
 const ENOENT = () => Object.assign(new Error("missing"), { code: "ENOENT" });
 function memoryFs(entries, canonical = "/workspace/repo") {
@@ -620,6 +620,139 @@ describe("setup manager PR 1 guardrails", () => {
       const source = String(await readFile(new URL("./setup-files.js", import.meta.url), "utf8"));
       expect(source).not.toMatch(/CODEX_HOME|process\.env\.HOME|homedir|os\.homedir/);
       expect(source).not.toMatch(/trusted_projects|trustReader|CodexTrustReader|spawn|execFile/);
+    });
+  });
+
+  describe("PR 6 Codex reconciliation wiring", () => {
+    const root = "/repo";
+    const envFile = "/repo/.env";
+    const entry = (file = envFile, command = "ticket-analyzer-mcp") => [
+      "[mcp_servers.ticket-analyzer]",
+      `command = "${command}"`,
+      "args = []",
+      "",
+      "[mcp_servers.ticket-analyzer.env]",
+      `TICKET_ANALYZER_ENV_FILE = "${file}"`,
+      "",
+    ].join("\n");
+    const codexFacts = { configPath: CODEX_RELATIVE_CONFIG_PATH, table: CODEX_TARGET_TABLE, command: "ticket-analyzer-mcp", envFile };
+    const adapterFor = (content) => new CodexAdapter({ readConfig: async () => content });
+    const acknowledged = { acknowledged: true };
+
+    test("classifies absent, matching, owned, foreign, and unsafe project entries", async () => {
+      const absent = await adapterFor("").discover({ root });
+      const matching = await adapterFor(entry()).discover({ root });
+      const owned = await adapterFor(entry()).discover({ root, state: buildOwnershipState(root, { codex: codexFacts }) });
+      const foreign = await adapterFor(entry("/other/.env")).discover({ root });
+      const unsafe = await adapterFor(`${entry()}\n${entry()}`).discover({ root });
+      expect([absent.classification, matching.classification, owned.classification, foreign.classification]).toEqual(["absent", "matching", "owned", "foreign"]);
+      expect(unsafe).toMatchObject({ classification: "unknown", recovery: expect.stringMatching(/manual/i) });
+    });
+
+    test("blocks every mutation until the per-run trust precondition is acknowledged", async () => {
+      const adapter = adapterFor("");
+      const discovery = await adapter.discover({ root });
+      const blocked = adapter.buildOperation({ discovery });
+      expect(blocked).toMatchObject({ blocked: true, recovery: CODEX_TRUST_PRECONDITION });
+      expect(blocked.after).toBeUndefined();
+      await expect(adapter.execute(blocked, { writeConfig: jest.fn() })).rejects.toThrow(/blocked/i);
+    });
+
+    test("plans an absent entry as an add carrying the exact diff and resulting bytes", async () => {
+      const adapter = adapterFor("");
+      const operation = adapter.buildOperation({ discovery: await adapter.discover({ root }), acknowledgement: acknowledged });
+      expect(operation).toMatchObject({ client: "codex", kind: "add", configPath: CODEX_RELATIVE_CONFIG_PATH });
+      expect(operation.after).toBe(entry().trimEnd() + "\n");
+      expect(operation.diff).toContain(`+TICKET_ANALYZER_ENV_FILE = "${envFile}"`);
+    });
+
+    test("requires an explicit decision for matching and foreign entries", async () => {
+      const matching = await adapterFor(entry()).discover({ root });
+      const foreign = await adapterFor(entry("/other/.env")).discover({ root });
+      const adapter = adapterFor(entry());
+      expect(adapter.buildOperation({ discovery: matching, acknowledgement: acknowledged })).toMatchObject({ blocked: true, reason: expect.stringMatching(/adopt/i) });
+      expect(adapter.buildOperation({ discovery: foreign, acknowledgement: acknowledged })).toMatchObject({ blocked: true, reason: expect.stringMatching(/replace/i) });
+      expect(adapter.buildOperation({ discovery: matching, decision: "adopt", acknowledgement: acknowledged })).toMatchObject({ kind: "adopt", changed: false });
+      const replace = adapter.buildOperation({ discovery: foreign, decision: "replace", acknowledgement: acknowledged });
+      expect(replace).toMatchObject({ kind: "replace" });
+      expect(replace.replacementLossWarning).toMatch(/within the targeted entry/i);
+    });
+
+    test("establishes the ignore rule, writes the target, verifies it, then persists ownership", async () => {
+      let content = "";
+      const events = [];
+      const adapter = new CodexAdapter({ readConfig: async () => content });
+      const operation = adapter.buildOperation({ discovery: await adapter.discover({ root }), acknowledgement: acknowledged });
+      await expect(adapter.execute(operation, {
+        ensureIgnoreRule: async () => events.push("ignore"),
+        writeConfig: async ({ before, after }) => { events.push({ step: "write", before, after }); content = after; },
+        writeOwnership: async (facts) => events.push({ step: "sidecar", facts }),
+      })).resolves.toEqual({ success: true });
+      expect(events.map((event) => event.step ?? event)).toEqual(["ignore", "write", "sidecar"]);
+      expect(events[1]).toMatchObject({ before: "" });
+      expect(events[2].facts).toMatchObject(codexFacts);
+    });
+
+    test("does not persist ownership when the written entry fails post-write verification", async () => {
+      const adapter = new CodexAdapter({ readConfig: async () => "" });
+      const operation = adapter.buildOperation({ discovery: await adapter.discover({ root }), acknowledgement: acknowledged });
+      const writeOwnership = jest.fn();
+      await expect(adapter.execute(operation, { writeConfig: async () => {}, writeOwnership })).rejects.toThrow(/verification/i);
+      expect(writeOwnership).not.toHaveBeenCalled();
+    });
+
+    test("refuses to execute a plan whose source bytes changed after planning", async () => {
+      let content = "";
+      const adapter = new CodexAdapter({ readConfig: async () => content });
+      const operation = adapter.buildOperation({ discovery: await adapter.discover({ root }), acknowledgement: acknowledged });
+      content = entry("/drifted/.env");
+      const writeConfig = jest.fn();
+      await expect(adapter.execute(operation, { writeConfig, writeOwnership: jest.fn() })).rejects.toThrow(/changed|stale/i);
+      expect(writeConfig).not.toHaveBeenCalled();
+    });
+
+    test("removes only an owned entry, target before sidecar, without touching the ignore rule", async () => {
+      let content = entry();
+      const events = [];
+      const adapter = new CodexAdapter({ readConfig: async () => content });
+      const discovery = await adapter.discover({ root, state: buildOwnershipState(root, { codex: codexFacts }) });
+      const operation = adapter.buildOperation({ discovery, intent: "remove", acknowledgement: acknowledged });
+      await expect(adapter.execute(operation, {
+        ensureIgnoreRule: async () => events.push("ignore"),
+        writeConfig: async ({ after }) => { events.push("write"); content = after; },
+        writeOwnership: async (facts) => events.push({ step: "sidecar", facts }),
+      })).resolves.toEqual({ success: true });
+      expect(events.map((event) => event.step ?? event)).toEqual(["write", "sidecar"]);
+      expect(events[1].facts).toBeNull();
+      expect(content).not.toContain("ticket-analyzer");
+    });
+
+    test("keeps Codex authority inside the project file and out of any subprocess or home path", async () => {
+      const source = String(await readFile(new URL("./setup-adapters.js", import.meta.url), "utf8"));
+      expect(source).not.toMatch(/CODEX_HOME|homedir|trusted_projects/);
+      expect(source.slice(source.indexOf("class CodexAdapter"))).not.toMatch(/runCommand|resolveExecutable|spawn/);
+    });
+
+    test("a blocked Codex client leaves independently selected operations planned", async () => {
+      const output = [];
+      const result = await setupCommand({
+        cwd: root,
+        filesystem: memoryFs({ [root]: "dir", [path.join(root, ".git")]: "file" }),
+        stdin: { isTTY: false },
+        stdout: { isTTY: false, write: (text) => output.push(text) },
+        selections: { providers: [], clients: ["claude", "codex"] },
+        dryRun: true,
+        environment: { PATH: "/safe" },
+        resolveExecutable: async () => "/bin/claude",
+        runCommand: async () => ({ stdout: "null", stderr: "" }),
+        inspectProjectConfig: async () => ({ safe: true, tracked: false }),
+        readCodexConfig: async () => "",
+      });
+      expect(result).toBe(0);
+      const text = output.join(" ");
+      expect(text).toMatch(/Client claude: add/i);
+      expect(text).toMatch(/codex/i);
+      expect(text).toMatch(/trust/i);
     });
   });
 

@@ -1,6 +1,14 @@
 import path from "node:path";
 import { lstat as nativeLstat, readFile as nativeReadFile } from "node:fs/promises";
-import { classifyOwnership } from "./setup-files.js";
+import {
+  CODEX_COMMAND,
+  CODEX_RELATIVE_CONFIG_PATH,
+  CODEX_TARGET_TABLE,
+  acknowledgeCodexTrust,
+  classifyOwnership,
+  locateCodexEntry,
+  planCodexEntry,
+} from "./setup-files.js";
 
 const CLIENT_ENV_KEYS = new Set(["PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "LANG", "LC_ALL", "TERM"]);
 const manualRecovery = "Claude project MCP state could not be verified safely; recover it manually in Claude Code.";
@@ -141,6 +149,120 @@ export class ClaudeAdapter {
       const verifiedRemoval = operation.kind === "remove" && verified?.classification === "absent";
       const verifiedRegistration = operation.kind !== "remove" && sameFacts(verified?.observed, operation.canonical) && ["matching", "owned"].includes(verified.classification);
       if (!verifiedRemoval && !verifiedRegistration) throw new Error("Claude project MCP post-command verification failed.");
+    }
+    await writeOwnership(operation.kind === "remove" ? null : operation.canonical);
+    return { success: true };
+  }
+}
+
+const codexRecovery = `Codex project configuration could not be targeted safely; reconcile ${CODEX_RELATIVE_CONFIG_PATH} manually.`;
+
+function codexFacts(root) {
+  return { configPath: CODEX_RELATIVE_CONFIG_PATH, table: CODEX_TARGET_TABLE, command: CODEX_COMMAND, envFile: path.join(root, ".env") };
+}
+
+function codexUnknown(reason) {
+  return { client: "codex", classification: "unknown", reason, recovery: codexRecovery };
+}
+
+export function renderCodexOperation(operation) {
+  return [
+    `Codex project configuration operation on ${CODEX_RELATIVE_CONFIG_PATH}`,
+    `kind: ${operation.kind}`,
+    operation.diff || "(no textual change)",
+    ...(operation.replacementLossWarning ? [operation.replacementLossWarning] : []),
+  ].join("\n");
+}
+
+/**
+ * Reconciles only the project's own `.codex/config.toml` entry. Codex trust is a per-run
+ * operator assertion supplied by the caller; this adapter never reads, stores, or verifies it,
+ * and never runs a Codex process.
+ */
+export class CodexAdapter {
+  constructor(dependencies = {}) {
+    this.readConfig = dependencies.readConfig;
+    this.writeConfig = dependencies.writeConfig;
+  }
+
+  async discover({ root, state, acknowledgement } = {}) {
+    if (!path.isAbsolute(root) || typeof this.readConfig !== "function") return codexUnknown("Codex inspection dependencies are unavailable.");
+    let content;
+    try {
+      content = await this.readConfig({ root });
+    } catch {
+      return codexUnknown("Codex project configuration is unavailable for inspection.");
+    }
+    const source = typeof content === "string" ? content : "";
+    const located = locateCodexEntry(source);
+    if (!located.safe) return codexUnknown(located.reason);
+    const canonical = codexFacts(root);
+    const observed = located.present
+      ? { configPath: CODEX_RELATIVE_CONFIG_PATH, table: CODEX_TARGET_TABLE, command: located.observed.command ?? "", envFile: located.observed.envFile ?? "" }
+      : { absent: true };
+    const ownership = classifyOwnership({ client: "codex", state, observed, canonical });
+    return {
+      client: "codex",
+      root,
+      configPath: CODEX_RELATIVE_CONFIG_PATH,
+      content: source,
+      observed,
+      canonical,
+      trust: acknowledgeCodexTrust(acknowledgement ?? {}),
+      ...ownership,
+      recovery: ownership.classification === "unknown" ? codexRecovery : undefined,
+    };
+  }
+
+  buildOperation({ discovery, decision, intent = "add", acknowledgement } = {}) {
+    const trust = acknowledgeCodexTrust(acknowledgement ?? { acknowledged: discovery?.trust?.acknowledged === true });
+    if (trust.blocked) return { client: "codex", blocked: true, reason: trust.reason, recovery: trust.recovery };
+    if (!discovery || discovery.classification === "unknown") return { client: "codex", blocked: true, reason: discovery?.reason ?? codexRecovery, recovery: codexRecovery };
+
+    const canonical = discovery.canonical ?? codexFacts(discovery.root);
+    const base = { client: "codex", root: discovery.root, configPath: CODEX_RELATIVE_CONFIG_PATH, before: discovery.content, canonical };
+    if (intent === "remove") {
+      if (discovery.classification !== "owned") return { client: "codex", blocked: true, reason: "Only an owned Codex project entry can be removed.", recovery: codexRecovery };
+    } else if (discovery.classification === "matching" && decision !== "adopt") {
+      return { client: "codex", blocked: true, reason: "Adopt the matching Codex project entry explicitly.", recovery: codexRecovery };
+    } else if (discovery.classification === "foreign" && decision !== "replace") {
+      return { client: "codex", blocked: true, reason: "Replace the foreign Codex project entry explicitly.", recovery: codexRecovery };
+    }
+
+    if (intent !== "remove" && discovery.classification === "matching") return { ...base, kind: "adopt", changed: false, after: discovery.content, diff: "" };
+    const planned = planCodexEntry({ content: discovery.content, envFile: canonical.envFile, intent: intent === "remove" ? "remove" : "replace" });
+    if (!planned.safe) return { client: "codex", blocked: true, reason: planned.reason, recovery: codexRecovery };
+    return {
+      ...base,
+      kind: intent === "remove" ? "remove" : discovery.classification === "absent" ? "add" : "replace",
+      changed: planned.changed,
+      after: planned.after,
+      diff: planned.diff,
+      ...(planned.replacementLossWarning ? { replacementLossWarning: planned.replacementLossWarning } : {}),
+    };
+  }
+
+  async execute(operation, dependencies = {}) {
+    if (operation?.blocked || operation?.client !== "codex") throw new Error("Codex operation is blocked.");
+    const ensureIgnoreRule = dependencies.ensureIgnoreRule ?? (async () => {});
+    const writeOwnership = dependencies.writeOwnership ?? (async () => {});
+    const discover = dependencies.discover ?? ((context) => this.discover(context));
+
+    if (operation.kind !== "adopt") {
+      const writeConfig = dependencies.writeConfig ?? this.writeConfig;
+      if (typeof writeConfig !== "function") throw new Error("Codex configuration writer is unavailable.");
+      const current = await discover({ root: operation.root, state: dependencies.state });
+      if (current?.content !== operation.before) throw new Error("Codex project configuration changed after planning; re-run setup for a fresh plan.");
+      if (operation.kind !== "remove") await ensureIgnoreRule();
+      try {
+        await writeConfig({ root: operation.root, target: path.join(operation.root, CODEX_RELATIVE_CONFIG_PATH), before: operation.before, after: operation.after });
+      } catch {
+        throw new Error(`Codex project configuration write failed; reconcile ${CODEX_RELATIVE_CONFIG_PATH} manually.`);
+      }
+      const verified = await discover({ root: operation.root, state: dependencies.state });
+      const removed = operation.kind === "remove" && verified?.classification === "absent";
+      const registered = operation.kind !== "remove" && sameFacts(verified?.observed, operation.canonical);
+      if (!removed && !registered) throw new Error("Codex project configuration post-write verification failed.");
     }
     await writeOwnership(operation.kind === "remove" ? null : operation.canonical);
     return { success: true };
