@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { checkbox, confirm, input as inquirerInput, password } from "@inquirer/prompts";
 import dotenv from "dotenv";
+import { setupCommand as runSetupManager } from "./setup-manager.js";
 
 const VERSION = "2.3.1";
 const ENV_FILE_VARIABLE = "TICKET_ANALYZER_ENV_FILE";
@@ -123,9 +124,6 @@ export function parseSetupArgs(args) {
   }
   const configureClients = seen.has("--configure-clients");
   const dryRun = seen.has("--dry-run");
-  if (dryRun && !configureClients) {
-    throw new Error("Invalid setup argument: --dry-run requires --configure-clients");
-  }
   return { configureClients, dryRun };
 }
 
@@ -441,7 +439,7 @@ async function configureSelectedClients({ clients, filePath, cwd, env, finalValu
   return failed ? 1 : 0;
 }
 
-export async function setupCommand(options = {}) {
+async function legacySetupCommand(options = {}) {
   const stdin = options.stdin ?? process.stdin;
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
@@ -523,6 +521,12 @@ export async function setupCommand(options = {}) {
   }
 }
 
+export async function setupCommand(options = {}) {
+  if (options.setupManager) return options.setupManager(options);
+  if (options.plan || options.selections) return runSetupManager(options);
+  return legacySetupCommand(options);
+}
+
 export async function statusCommand(options = {}) {
   const stdout = options.stdout ?? process.stdout;
   const { values, filePath, file } = await loadCommandEnvironment(options);
@@ -577,9 +581,9 @@ function helpText() {
     "",
     "Usage:",
     "  ticket-analyzer-mcp              Start the MCP server over stdio",
-    "  ticket-analyzer-mcp setup        Configure selected providers in the project .env",
-    "      --configure-clients          Detect and configure selected Claude Code, Codex, or Pi clients",
-    "      --dry-run                     Show the client plan; does not configure clients (credential setup may still run)",
+    "  ticket-analyzer-mcp setup        Plan and confirm project-scoped provider and client setup",
+    "      --configure-clients          Compatibility alias for unified setup",
+    "      --dry-run                     Show the complete redacted plan without prompts or mutations",
     "  ticket-analyzer-mcp doctor       Diagnose Node, .env, provider, and connection status",
     "  ticket-analyzer-mcp status       Check local provider configuration without network calls",
     "  ticket-analyzer-mcp --help       Show this help",
@@ -602,7 +606,7 @@ export async function runCli(argv = process.argv.slice(2), options = {}) {
   if (command === "setup") {
     try {
       const setupArgs = parseSetupArgs(commandArgs);
-      return (await setupCommand({ ...options, ...setupArgs })) ?? 0;
+      return (await setupCommand({ ...options, ...setupArgs, setupManager: options.setupManager ?? runSetupManager })) ?? 0;
     } catch (error) {
       if (error instanceof Error && /^Invalid setup argument:/i.test(error.message)) {
         writeOutput(stderr, `${error.message}. Run with --help for usage.`);
