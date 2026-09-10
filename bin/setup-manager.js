@@ -5,10 +5,17 @@ import {
   CODEX_RELATIVE_CONFIG_PATH,
   ENV_PRECEDENCE_WARNING,
   PROVIDER_ENV_VARS,
+  atomicTextWrite,
+  buildOwnershipState,
   editProviderEnv,
   inspectSidecarIgnoreRuleFile,
+  parseOwnershipState,
+  prepareAtomicWrite,
+  readOwnershipState,
   resolveManagedEnvPath,
   validateProjectPath,
+  writeOwnershipState,
+  writeSidecarIgnoreRule,
 } from "./setup-files.js";
 import { ClaudeAdapter, CodexAdapter, PiAdapter, PiSettingsInspector, PI_SETTINGS_RELATIVE_PATH, inspectClaudeProjectConfig } from "./setup-adapters.js";
 
@@ -339,6 +346,17 @@ function writeOutput(stdout, text) {
   stdout.write(`${text}\n`);
 }
 
+// A stopped run must state exactly what the project now carries, because nothing is undone
+// for the caller: every completed stage stays applied.
+function renderRemainingState(result) {
+  const lines = [`Setup stopped: ${result.reason ?? result.failed?.reason ?? result.status}.`];
+  lines.push(`Completed: ${result.completed.join(", ") || "none"}.`);
+  if (result.failed) lines.push(`Failed: ${result.failed.id} — ${result.failed.reason}`);
+  lines.push(`Unattempted: ${result.unattempted.join(", ") || "none"}.`);
+  lines.push("There is no automatic rollback; the completed stages above remain applied.");
+  return lines.join("\n");
+}
+
 function clientAdapter(client, adapters, dependencies) {
   if (adapters?.[client]) return adapters[client];
   if (client === "codex") {
@@ -382,6 +400,17 @@ async function readCodexProjectConfig({ root, filesystem = nativeFilesystem }) {
     if (notFound(error)) return "";
     throw error;
   }
+}
+
+export const CLIENT_EXECUTION_ORDER = Object.freeze(["claude", "codex", "pi"]);
+
+export function orderSetupOperations({ provider = null, ignore = null, clients = [] } = {}) {
+  const rank = (operation) => {
+    const position = CLIENT_EXECUTION_ORDER.indexOf(operation?.id ?? operation?.client);
+    return position === -1 ? CLIENT_EXECUTION_ORDER.length : position;
+  };
+  const ordered = [...clients].sort((left, right) => rank(left) - rank(right));
+  return [provider, ignore, ...ordered].filter(Boolean);
 }
 
 async function discoverClientOperations({
@@ -428,7 +457,7 @@ async function discoverClientOperations({
         environment,
         runCommand: dependencies.runCommand,
         ensureIgnoreRule: dependencies.ensureIgnoreRule,
-        writeOwnership: dependencies.writeOwnership,
+        writeOwnership: async (facts) => dependencies.writeOwnership?.(client, facts),
         discover: async ({ root: operationRoot }) => adapter.discover({ root: operationRoot, state, environment }),
       }),
     });
@@ -493,16 +522,58 @@ export async function setupCommand(options = {}) {
     }
     providerValues[provider] = values;
   }
+  const readIgnore = async () => {
+    try { return String(await (filesystem.readFile ?? nativeReadFile)(path.join(root, ".gitignore"), "utf8")); } catch (error) { if (!notFound(error)) throw error; return ""; }
+  };
+  const writeEnvFile = options.writeEnvFile ?? (async (preparation) => atomicTextWrite({ root, target: preparation.target, before: preparation.expected, after: preparation.content, filesystem, tempPath: preparation.tempPath, mode: preparation.mode }));
+  const ensureIgnoreRule = options.ensureIgnoreRule ?? (async () => writeSidecarIgnoreRule({ root, before: await readIgnore(), filesystem }));
+  const writeOwnership = options.writeOwnership ?? (async (client, facts) => {
+    const before = await readOwnershipState({ root, filesystem });
+    const parsed = parseOwnershipState(before.source ?? "");
+    const clientFacts = { ...(parsed.safe ? parsed.state.clients : {}) };
+    if (facts === null) delete clientFacts[client];
+    else clientFacts[client] = facts;
+    await writeOwnershipState({ root, state: buildOwnershipState(root, clientFacts), filesystem, before: before.source });
+  });
+  const discoverClients = async () => discoverClientOperations({
+    clients,
+    root,
+    state: options.state,
+    environment: options.environment ?? options.env ?? process.env,
+    decisions: options.decisions,
+    intents: options.clientIntents,
+    acknowledgements: options.acknowledgements,
+    adapters: options.adapters,
+    dependencies: {
+      resolveExecutable: options.resolveExecutable,
+      runCommand: options.runCommand,
+      inspectProjectConfig: options.inspectProjectConfig,
+      readCodexConfig: options.readCodexConfig,
+      writeCodexConfig: options.writeCodexConfig,
+      readPiSettings: options.readPiSettings,
+      packageVersion: options.packageVersion,
+      piActionContract: options.piActionContract,
+      filesystem,
+      ensureIgnoreRule,
+      writeOwnership,
+    },
+  });
   const makePlan = async () => {
     let envBefore = "";
     try { envBefore = String(await (filesystem.readFile ?? nativeReadFile)(envPath, "utf8")); } catch (error) { if (!notFound(error)) throw error; }
     const providerOperations = [];
+    let envDraft = envBefore;
+    let envPreparation = null;
     for (const provider of providers) {
       const values = providerValues[provider] ?? {};
       if (Object.keys(values).length) {
-        const edit = editProviderEnv(envBefore, { provider, updates: values });
-        if (!edit.safe) providerOperations.push({ provider, action: "blocked", redactedDiff: edit.reason });
-        else providerOperations.push({ provider, action: "update", ...edit });
+        // Each provider edits the bytes the previous one produced so a multi-provider run
+        // writes one cumulative file instead of silently keeping only the last edit.
+        const edit = editProviderEnv(envDraft, { provider, updates: values });
+        if (!edit.safe) { providerOperations.push({ provider, action: "blocked", redactedDiff: edit.reason }); continue; }
+        providerOperations.push({ provider, action: "update", ...edit });
+        envPreparation = await prepareAtomicWrite({ root, target: envPath, before: envBefore, editResult: edit, existing: envBefore !== "", filesystem });
+        envDraft = envPreparation.content;
       }
     }
     let ignore;
@@ -510,28 +581,12 @@ export async function setupCommand(options = {}) {
     if (clients.length) {
       try { ignore = await inspectSidecarIgnoreRuleFile({ root, filesystem }); ignoreBefore = ignore.before; } catch (error) { ignore = { safe: false, reason: error.message }; }
     }
-    const clientPlan = await discoverClientOperations({
-      clients,
-      root,
-      state: options.state,
-      environment: options.environment ?? options.env ?? process.env,
-      decisions: options.decisions,
-      intents: options.clientIntents,
-      acknowledgements: options.acknowledgements,
-      adapters: options.adapters,
-      dependencies: {
-        resolveExecutable: options.resolveExecutable,
-        runCommand: options.runCommand,
-        inspectProjectConfig: options.inspectProjectConfig,
-        readCodexConfig: options.readCodexConfig,
-        writeCodexConfig: options.writeCodexConfig,
-        readPiSettings: options.readPiSettings,
-        packageVersion: options.packageVersion,
-        piActionContract: options.piActionContract,
-        filesystem,
-        ensureIgnoreRule: options.ensureIgnoreRule,
-        writeOwnership: options.writeOwnership,
-      },
+    const clientPlan = await discoverClients();
+    const needsOwnership = clientPlan.operations.some((operation) => operation.kind !== "remove");
+    const stages = orderSetupOperations({
+      provider: envPreparation ? { id: "providers", execute: async () => writeEnvFile(envPreparation) } : null,
+      ignore: needsOwnership ? { id: "ignore-rule", execute: async () => ensureIgnoreRule() } : null,
+      clients: clientPlan.operations,
     });
     return buildPlan({
       root,
@@ -547,7 +602,7 @@ export async function setupCommand(options = {}) {
       decisions: options.decisions ?? {},
       snapshots: { env: envBefore, ignore: ignoreBefore, selections: { providers, clients }, clientDiscovery: clientPlan.discoveries },
       secretInputs,
-      operations: options.operations ?? clientPlan.operations,
+      operations: options.operations ?? stages,
     });
   };
   const plan = await makePlan();
@@ -561,16 +616,16 @@ export async function setupCommand(options = {}) {
     current: options.current ?? (async () => {
       let currentEnv = "";
       try { currentEnv = String(await (filesystem.readFile ?? nativeReadFile)(envPath, "utf8")); } catch (error) { if (!notFound(error)) throw error; }
-      let currentIgnore = "";
-      try { currentIgnore = String(await (filesystem.readFile ?? nativeReadFile)(path.join(root, ".gitignore"), "utf8")); } catch (error) { if (!notFound(error)) throw error; }
-      return { env: currentEnv, ignore: currentIgnore, selections: { providers, clients } };
+      // Rediscovering before every operation is what makes a plan honest: a client the
+      // user reconfigured mid-run invalidates the confirmation instead of being overwritten.
+      return { env: currentEnv, ignore: await readIgnore(), selections: { providers, clients }, clientDiscovery: (await discoverClients()).discoveries };
     }),
     replan: options.replan ?? (async () => makePlan()),
     renderPlan: async (currentPlan) => writeOutput(stdout, renderPlan(currentPlan)),
     executeOperation: options.executeOperation,
   });
-  if (result.status === "completed") writeOutput(stdout, "Setup plan confirmed; no client-specific mutations are available in this work unit.");
-  else writeOutput(stdout, `Setup stopped: ${result.reason ?? result.failed?.reason ?? result.status}.`);
+  if (result.status === "completed") writeOutput(stdout, `Setup completed: ${result.completed.join(", ") || "nothing to apply"}.`);
+  else writeOutput(stdout, renderRemainingState(result));
   prompt.close?.();
   return result.status === "completed" ? 0 : 1;
 }
