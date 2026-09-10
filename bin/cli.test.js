@@ -27,7 +27,7 @@ describe("ticket-analyzer CLI", () => {
     expect(text).toContain("ticket-analyzer-mcp 2.3.1");
     expect(text).toContain("ticket-analyzer-mcp setup");
     expect(text).toContain("--configure-clients");
-    expect(text).toMatch(/--dry-run.*does not configure clients/i);
+    expect(text).toMatch(/--dry-run.*complete redacted plan.*without prompts or mutations/i);
     expect(text).not.toContain("npx");
   });
 
@@ -307,6 +307,8 @@ describe("ticket-analyzer CLI", () => {
   });
 
   test.each([
+    [[], { configureClients: false, dryRun: false }],
+    [["--dry-run"], { configureClients: false, dryRun: true }],
     [["--configure-clients"], { configureClients: true, dryRun: false }],
     [["--dry-run", "--configure-clients"], { configureClients: true, dryRun: true }],
     [["--configure-clients", "--dry-run"], { configureClients: true, dryRun: true }],
@@ -315,7 +317,6 @@ describe("ticket-analyzer CLI", () => {
   });
 
   test.each([
-    ["--dry-run"],
     ["--configure-clients", "--configure-clients"],
     ["--dry-run", "--dry-run"],
     ["--configure-clients", "unexpected"],
@@ -700,7 +701,33 @@ describe("ticket-analyzer CLI", () => {
     expect(resolveExecutable("client", { PATH: bin, PATHEXT: ".CMD;.BAT" }, cwd, "win32")).toBeNull();
   });
 
-  test("runCli rejects arguments for non-setup commands", async () => {
+  test("bare setup and its alias delegate one compatible manager contract", async () => {
+    const calls = [];
+    const setupManager = jest.fn(async (options) => { calls.push(options); return 0; });
+    await expect(runCli(["setup"], { setupManager })).resolves.toBe(0);
+    await expect(runCli(["setup", "--configure-clients"], { setupManager })).resolves.toBe(0);
+    await expect(runCli(["setup", "--dry-run"], { setupManager })).resolves.toBe(0);
+    expect(setupManager).toHaveBeenCalledTimes(3);
+    expect(calls[0]).toEqual(expect.objectContaining({ configureClients: false, dryRun: false }));
+    expect(calls[1]).toEqual(expect.objectContaining({ configureClients: true, dryRun: false }));
+    expect(calls[2]).toEqual(expect.objectContaining({ configureClients: false, dryRun: true }));
+  });
+
+test("dry-run with explicit selections renders without prompts, writes, or spawns", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-"));
+    await writeFile(path.join(cwd, "package.json"), "{}\\n");
+    const output = [];
+    const promptAdapter = { providers: jest.fn(), client: jest.fn(), input: jest.fn(), password: jest.fn(), confirm: jest.fn() };
+    const executeOperation = jest.fn();
+    await expect(setupCommand({ cwd, env: {}, stdin: { isTTY: false }, stdout: { write: (text) => output.push(text) }, promptAdapter, selections: { providers: [], clients: [] }, dryRun: true, executeOperation })).resolves.toBe(0);
+    expect(output.join(" ")).toMatch(/unified project setup plan/i);
+    expect(promptAdapter.providers).not.toHaveBeenCalled();
+    expect(promptAdapter.client).not.toHaveBeenCalled();
+    expect(promptAdapter.confirm).not.toHaveBeenCalled();
+    expect(executeOperation).not.toHaveBeenCalled();
+  });
+
+test("runCli rejects arguments for non-setup commands", async () => {
     const output = [];
     await expect(runCli(["status", "unexpected"], { stderr: { write: (text) => output.push(text) } })).resolves.toBe(1);
     expect(output.join(" ")).toMatch(/invalid argument.*status.*unexpected/i);

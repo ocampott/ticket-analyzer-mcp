@@ -1,4 +1,4 @@
-import { describe, expect, test } from "@jest/globals";
+import { describe, expect, jest, test } from "@jest/globals";
 import path from "node:path";
 import {
   PROVIDER_ENV_VARS,
@@ -19,7 +19,14 @@ import {
   planSidecarIgnoreRule,
   inspectSidecarIgnoreRuleFile,
 } from "./setup-files.js";
-import { resolveProjectRoot } from "./setup-manager.js";
+import {
+  buildPlan,
+  computePlanId,
+  executePlan,
+  renderPlan,
+  resolveProjectRoot,
+  setupCommand,
+} from "./setup-manager.js";
 
 const ENOENT = () => Object.assign(new Error("missing"), { code: "ENOENT" });
 function memoryFs(entries, canonical = "/workspace/repo") {
@@ -222,5 +229,207 @@ describe("setup manager PR 1 guardrails", () => {
     const filesystem = memoryFs({ "/repo": "dir", "/repo/.gitignore": "file" });
     await expect(inspectSidecarIgnoreRuleFile({ root: "/repo", filesystem, readFile: async () => "" })).resolves.toMatchObject({ safe: true, action: "append" });
     await expect(inspectSidecarIgnoreRuleFile({ root: "/repo", filesystem: memoryFs({ "/repo": "dir", "/repo/.gitignore": "link" }), readFile: async () => "" })).rejects.toThrow(/symlink/i);
+  });
+
+  describe("immutable setup plans", () => {
+    const baseInput = {
+      root: "/repo",
+      selections: { providers: ["jira"], clients: ["codex"] },
+      providerOperations: [{ provider: "jira", action: "edit", redactedDiff: "- JIRA_HOST=[redacted]\\n+ JIRA_HOST=[redacted]", affectedLines: [{ key: "JIRA_HOST", action: "edit", before: "JIRA_HOST=[redacted]", after: "JIRA_HOST=[redacted]" }] }],
+      files: {
+        env: { path: "/repo/.env", diff: "- JIRA_HOST=[redacted]\\n+ JIRA_HOST=[redacted]" },
+        sidecar: { path: "/repo/.ticket-analyzer/setup-state.json", before: null, after: "[redacted-free state]" },
+        ignore: { path: "/repo/.gitignore", diff: "+/.ticket-analyzer/setup-state.json" },
+      },
+      clientOperations: [{ client: "codex", kind: "replace", executable: "/bin/codex", argv: ["mcp", "add", "ticket-analyzer"] }],
+      blockedOperations: [{ client: "pi", reason: "Manual recovery is required." }],
+      decisions: { codexTrustAcknowledged: false, reconciliation: { codex: "replace" } },
+      snapshots: { env: "env-before", sidecar: "sidecar-before", ignore: "ignore-before", executable: "codex-before" },
+      secretInputs: ["super-secret"],
+    };
+
+    test("renders a complete frozen redacted plan with identity and state entries", () => {
+      const plan = buildPlan(baseInput);
+      const text = renderPlan(plan);
+      expect(plan.planId).toMatch(/^[a-f0-9]{64}$/);
+      expect(Object.isFrozen(plan)).toBe(true);
+      expect(Object.isFrozen(plan.selections)).toBe(true);
+      expect(text).toContain("/repo/.env");
+      expect(text).toContain("/.ticket-analyzer/setup-state.json");
+      expect(text).toContain(plan.planId);
+      expect(text).toContain("replace");
+      expect(text).toMatch(/blocked/i);
+      expect(text).not.toContain("super-secret");
+      expect(JSON.stringify(plan)).not.toContain("super-secret");
+    });
+
+    test("changes plan identity for every mutable input but never snapshots trust files", () => {
+      const plan = buildPlan(baseInput);
+      const variations = [
+        { selections: { ...baseInput.selections, providers: ["trello"] } },
+        { decisions: { ...baseInput.decisions, reconciliation: { codex: "adopt" } } },
+        { snapshots: { ...baseInput.snapshots, env: "changed" } },
+        { snapshots: { ...baseInput.snapshots, sidecar: "changed" } },
+        { snapshots: { ...baseInput.snapshots, ignore: "changed" } },
+        { snapshots: { ...baseInput.snapshots, executable: "changed" } },
+        { executables: { codex: "/other/codex" } },
+        { decisions: { ...baseInput.decisions, codexTrustAcknowledged: true } },
+      ];
+      for (const change of variations) {
+        expect(buildPlan({ ...baseInput, ...change }).planId).not.toBe(plan.planId);
+      }
+      expect(JSON.stringify(plan)).not.toMatch(/(?:trust\.json|codex_home|home\/\.codex)/i);
+      const withTrustPath = buildPlan({ ...baseInput, snapshots: { ...baseInput.snapshots, trustFile: "/home/user/.codex/trust.json" } });
+      expect(JSON.stringify(withTrustPath)).not.toContain("trustFile");
+      expect(computePlanId(plan, ["another-secret"])).not.toBe(plan.planId);
+    });
+
+    test("replans a changed snapshot before invoking any operation", async () => {
+      const execute = jest.fn();
+      const initial = buildPlan({ ...baseInput, operations: [{ id: "client", execute }] });
+      const replanned = buildPlan({ ...baseInput, snapshots: { ...baseInput.snapshots, env: "changed" }, operations: [{ id: "client", execute }] });
+      const confirm = jest.fn().mockResolvedValue(true);
+      const render = jest.fn();
+      const replan = jest.fn().mockResolvedValue(replanned);
+      const result = await executePlan(initial, {
+        confirm,
+        replan,
+        renderPlan: render,
+        current: async () => ({ ...baseInput.snapshots, env: "changed" }),
+      });
+      expect(result.status).toBe("completed");
+      expect(replan).toHaveBeenCalledWith(initial, expect.objectContaining({ reason: expect.stringMatching(/changed|stale/i) }));
+      expect(render).toHaveBeenCalledWith(replanned);
+      expect(confirm).toHaveBeenCalledTimes(1);
+      expect(execute).toHaveBeenCalledTimes(1);
+    });
+
+    test("replans and reconfirms when an input changes before an operation", async () => {
+      const confirm = jest.fn().mockResolvedValue(true);
+      const execute = jest.fn();
+      const initial = buildPlan({ ...baseInput, operations: [{ id: "client", execute }] });
+      const replanned = buildPlan({ ...baseInput, snapshots: { ...baseInput.snapshots, ignore: "changed" }, operations: [{ id: "client", execute }] });
+      const render = jest.fn();
+      let reads = 0;
+      const result = await executePlan(initial, {
+        confirm,
+        replan: async () => replanned,
+        renderPlan: render,
+        current: async () => (++reads === 1 ? baseInput.snapshots : { ...baseInput.snapshots, ignore: "changed" }),
+      });
+      expect(result.status).toBe("completed");
+      expect(render).toHaveBeenCalledWith(replanned);
+      expect(confirm).toHaveBeenCalledTimes(2);
+      expect(execute).toHaveBeenCalledTimes(1);
+    });
+
+    test("re-renders and reconfirms a replanned snapshot before executing", async () => {
+      const execute = jest.fn();
+      const confirm = jest.fn().mockResolvedValue(true);
+      const initial = buildPlan({ ...baseInput, operations: [{ id: "client", execute }] });
+      const replanned = buildPlan({ ...baseInput, snapshots: { ...baseInput.snapshots, ignore: "replanned" }, operations: [{ id: "client", execute }] });
+      const currentSnapshots = [baseInput.snapshots, { ...baseInput.snapshots, ignore: "changed" }, { ...baseInput.snapshots, ignore: "replanned" }];
+      const render = jest.fn();
+      const replan = jest.fn().mockResolvedValue(replanned);
+      const result = await executePlan(initial, {
+        confirm,
+        replan,
+        renderPlan: render,
+        current: async () => currentSnapshots.shift(),
+      });
+      expect(result.status).toBe("completed");
+      expect(replan).toHaveBeenCalledWith(initial, expect.objectContaining({ reason: expect.stringMatching(/changed|stale/i) }));
+      expect(render).toHaveBeenCalledWith(replanned);
+      expect(confirm).toHaveBeenCalledTimes(2);
+      expect(confirm.mock.calls[1][0]).toBe(replanned);
+      expect(execute).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("PR 3 interaction safety remediation", () => {
+    test.each([
+      ["stdin", { stdin: { isTTY: false }, stdout: { isTTY: true } }],
+      ["stdout", { stdin: { isTTY: true }, stdout: { isTTY: false } }],
+    ])("refuses interactive setup when %s is not a TTY", async (_stream, streams) => {
+      const providers = jest.fn();
+      const output = [];
+      const result = await setupCommand({
+        ...streams,
+        stdout: { ...streams.stdout, write: (text) => output.push(text) },
+        promptAdapter: { providers },
+      });
+      expect(result).toBe(1);
+      expect(providers).not.toHaveBeenCalled();
+      expect(output.join(" ")).toMatch(/interactive.*non-TTY|non-TTY.*interactive/i);
+    });
+
+    test("redacts client argv, before/after values, and execution errors", async () => {
+      const secret = "client-secret-value";
+      const clientError = Object.assign(new Error(`client failed with ${secret}`), {
+        stdout: `stdout contains ${secret}`,
+        stderr: `stderr contains ${secret}`,
+      });
+      const execute = jest.fn().mockRejectedValue(clientError);
+      const plan = buildPlan({
+        root: "/repo",
+        snapshots: { env: "env-before" },
+        secretInputs: [secret],
+        clientOperations: [{
+          client: "codex",
+          kind: "replace",
+          argv: ["configure", secret],
+          before: { token: secret },
+          after: { command: `token=${secret}` },
+          output: `client output contains ${secret}`,
+        }],
+        operations: [{ id: "client", argv: [secret], output: `raw output ${secret}`, execute }],
+      });
+      const rendered = renderPlan(plan);
+      expect(rendered).not.toContain(secret);
+      expect(JSON.stringify(plan)).not.toContain(secret);
+      const result = await executePlan(plan, { confirm: async () => true, current: async () => ({ env: "env-before" }) });
+      expect(result.failed.reason).not.toContain(secret);
+      expect(result.failed.reason).toContain("stdout contains [redacted]");
+      expect(result.failed.reason).toContain("stderr contains [redacted]");
+    });
+
+    test("keeps provider values redacted across a fresh plan", async () => {
+      const secret = "provider-secret-value";
+      const execute = jest.fn().mockRejectedValue(new Error(`client failed with ${secret}`));
+      const initial = buildPlan({ root: "/repo", snapshots: { env: "before" }, secretInputs: [secret], operations: [{ id: "client", execute }] });
+      const fresh = buildPlan({ root: "/repo", snapshots: { env: "fresh" }, operations: [{ id: "client", execute }] });
+      const snapshots = [{ env: "before" }, { env: "changed" }, { env: "fresh" }];
+      const result = await executePlan(initial, {
+        confirm: async () => true,
+        replan: async () => fresh,
+        current: async () => snapshots.shift(),
+      });
+      expect(result.failed.reason).not.toContain(secret);
+      expect(result.failed.reason).toContain("[redacted]");
+    });
+
+    test("re-renders and reconfirms a fresh setup plan after drift", async () => {
+      const execute = jest.fn();
+      const initial = buildPlan({ root: "/repo", snapshots: { env: "before" }, operations: [{ id: "client", execute }] });
+      const fresh = buildPlan({ root: "/repo", snapshots: { env: "fresh" }, operations: [{ id: "client", execute }] });
+      const output = [];
+      const confirm = jest.fn().mockResolvedValue(true);
+      const replan = jest.fn().mockResolvedValue(fresh);
+      const snapshots = [{ env: "before" }, { env: "changed" }, { env: "fresh" }];
+      const result = await setupCommand({
+        plan: initial,
+        stdin: { isTTY: true },
+        stdout: { isTTY: true, write: (text) => output.push(text) },
+        promptAdapter: { confirm },
+        current: async () => snapshots.shift(),
+        replan,
+      });
+      expect(result).toBe(0);
+      expect(replan).toHaveBeenCalledWith(initial, expect.objectContaining({ reason: expect.stringMatching(/changed|stale/i) }));
+      expect(confirm).toHaveBeenCalledTimes(2);
+      expect(confirm.mock.calls[1][0].message).toContain(fresh.planId);
+      expect(output.join(" ")).toContain(fresh.planId);
+      expect(execute).toHaveBeenCalledTimes(1);
+    });
   });
 });
