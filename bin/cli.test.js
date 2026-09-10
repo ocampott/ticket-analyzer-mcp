@@ -615,6 +615,68 @@ describe("ticket-analyzer CLI", () => {
     }
   });
 
+  // The runner hardening below is asserted at the runCommand boundary rather than through a
+  // setup path, so the guarantees survive whichever caller drives the child process.
+  test("runCommand keeps the env-file path in argv and out of the child environment", async () => {
+    const envFile = "/workspace/folder with spaces/project.env";
+    const spawnProcess = jest.fn(() => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      queueMicrotask(() => child.emit("close", 0));
+      return child;
+    });
+    const argv = ["mcp", "add", "ticket-analyzer", "--env", `TICKET_ANALYZER_ENV_FILE=${envFile}`, "--", "ticket-analyzer-mcp"];
+
+    await runCommand("/safe/bin/codex", argv, {
+      clientEnv: { PATH: "/safe/bin", HOME: "/home/person", TICKET_ANALYZER_ENV_FILE: envFile, JIRA_API_TOKEN: "provider-token" },
+      spawnProcess,
+    });
+
+    expect(spawnProcess.mock.calls[0][1]).toEqual(argv);
+    expect(spawnProcess.mock.calls[0][2].env).toEqual({ PATH: "/safe/bin", HOME: "/home/person" });
+  });
+
+  test("runCommand kills a child that exceeds its timeout and reports the bound", async () => {
+    jest.useFakeTimers();
+    try {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = jest.fn(() => true);
+      let resolveStarted;
+      const started = new Promise((resolve) => { resolveStarted = resolve; });
+      const spawnProcess = jest.fn(() => { resolveStarted(); return child; });
+
+      const settled = runCommand("/bin/codex", ["mcp", "add"], { timeoutMs: 25, spawnProcess }).catch((error) => error);
+      await started;
+      await jest.advanceTimersByTimeAsync(25);
+
+      expect(await settled).toMatchObject({ message: expect.stringMatching(/timed out after 25ms/i), code: "ETIMEDOUT" });
+      expect(child.kill).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test("runCommand redacts provider values in child failures", async () => {
+    const privateValue = ["provider", "value"].join("-");
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const spawnProcess = jest.fn(() => {
+      queueMicrotask(() => {
+        child.stderr.emit("data", Buffer.from(`failed with ${privateValue} and token=${privateValue}`));
+        child.emit("close", 1);
+      });
+      return child;
+    });
+
+    const failure = await runCommand("/bin/codex", [], { secretValues: [privateValue], spawnProcess }).catch((error) => error);
+    expect(failure.message).not.toContain(privateValue);
+    expect(failure.message).toContain("[redacted]");
+  });
+
   test("runCommand bounds captured stdout and stderr", async () => {
     const child = new EventEmitter();
     child.stdout = new EventEmitter();
