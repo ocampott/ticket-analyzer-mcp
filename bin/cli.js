@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { accessSync, constants as fsConstants, existsSync, statSync } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -15,14 +15,6 @@ const PROVIDERS = {
   azure: ["AZURE_DEVOPS_ORG", "AZURE_DEVOPS_PROJECT", "AZURE_DEVOPS_PAT"],
 };
 const PROVIDER_LABELS = { trello: "Trello", jira: "Jira", azure: "Azure DevOps" };
-    const PROVIDER_GUIDANCE = {
-      trello:
-        "Trello cards: get the API key from https://trello.com/app-key and the token from the Token link on that page. Enter plain values for TRELLO_API_KEY and TRELLO_TOKEN.",
-      jira:
-        "Jira issues: use the Atlassian site hostname (for example, company.atlassian.net), your Atlassian account email, and an API token from https://id.atlassian.com/manage-profile/security/api-tokens. Enter them as JIRA_HOST, JIRA_EMAIL, and JIRA_API_TOKEN.",
-      azure:
-        "Azure DevOps work items: use the organization and project names from https://dev.azure.com/{organization}/{project}, then create a PAT in Azure DevOps User settings. Enter AZURE_DEVOPS_ORG, AZURE_DEVOPS_PROJECT, and the PAT; the minimum PAT scope is Work Items: Read. Work Items: Read & Write is needed only for comments.",
-    };
 const NO_INTEGRATION_WARNING =
   "Warning: no ticket integration is configured. Add the required provider values to the project .env (or rerun setup) before tickets can work.";
 const SECRET_KEYS = new Set([
@@ -44,45 +36,10 @@ function nonEmpty(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function shellQuote(value) {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
-function formatEnvValue(value) {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\n", "\\n")}"`;
-}
-
-export function updateEnvContent(content, updates) {
-  const lines = content ? content.split(/\r?\n/) : [];
-  const written = new Set();
-  const keyPattern = /^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*=).*$/;
-  const replaced = lines.map((line) => {
-    const match = keyPattern.exec(line);
-    if (!match || !(match[2] in updates)) return line;
-    written.add(match[2]);
-    return `${match[1]}${match[2]}${match[3]}${formatEnvValue(updates[match[2]])}`;
-  });
-
-  const additions = Object.entries(updates)
-    .filter(([key]) => !written.has(key))
-    .map(([key, value]) => `${key}=${formatEnvValue(value)}`);
-  const output = [...replaced.filter((line, index) => index < replaced.length - 1 || line !== ""), ...additions];
-  return `${output.join("\n")}\n`;
-}
-
 async function readExistingEnv(filePath) {
   if (!existsSync(filePath)) return { exists: false, content: "", values: {} };
   const content = await readFile(filePath, "utf8");
   return { exists: true, content, values: dotenv.parse(content) };
-}
-
-function parseProviders(answer) {
-  const selected = Array.isArray(answer) ? [...new Set(answer)] : [];
-  const invalid = selected.filter((item) => !Object.hasOwn(PROVIDERS, item));
-  if (invalid.length > 0) {
-    throw new Error("Choose providers from the checkbox list.");
-  }
-  return selected;
 }
 
 const PROVIDER_CHOICES = [
@@ -95,7 +52,6 @@ const CLIENT_CHOICES = [
   { name: "OpenAI Codex", value: "codex" },
   { name: "Pi", value: "pi" },
 ];
-const CLIENT_LABELS = { claude: "Claude Code", codex: "OpenAI Codex", pi: "Pi" };
 export function parseSetupArgs(args) {
   const seen = new Set();
   for (const arg of args) {
@@ -264,35 +220,11 @@ export function createPromptAdapter(stdin = process.stdin, stdout = process.stdo
   return {
     providers: () => checkbox({ message: "Providers to configure:", choices: PROVIDER_CHOICES }, context),
     client: () => checkbox({ message: "Clients to configure (leave all unchecked to configure later):", choices: CLIENT_CHOICES }, context),
-    confirmClient: ({ message }) => confirm({ message }, context),
+    confirm: ({ message }) => confirm({ message }, context),
     input: ({ message }) => inquirerInput({ message }, context),
     password: ({ message }) => password({ message, mask: "*" }, context),
     close: () => {},
   };
-}
-
-function parseClients(answer) {
-  const raw = Array.isArray(answer) ? answer : [answer];
-  const selected = [...new Set(raw.map((item) => String(item ?? "").trim().toLowerCase()))].filter(Boolean);
-  if (selected.length === 0 || (selected.length === 1 && ["none", "later", "configure later"].includes(selected[0]))) return [];
-  if (selected.includes("none") || selected.includes("later") || selected.includes("configure later")) {
-    throw new Error("Choose clients from the checkbox list, or leave all clients unchecked.");
-  }
-  const invalid = selected.filter((item) => !Object.hasOwn(CLIENT_LABELS, item));
-  if (invalid.length > 0) throw new Error("Choose clients from the checkbox list.");
-  return selected;
-}
-
-async function askRequired(ask, label, existing) {
-  const canKeepExisting = nonEmpty(existing);
-  while (true) {
-    const value = await ask({
-      message: `${label}${canKeepExisting ? " (leave blank to keep the current value)" : ""}: `,
-    });
-    if (nonEmpty(value)) return value.trim();
-    if (canKeepExisting) return existing.trim();
-    writeOutput(process.stderr, `${label} is required and must not be empty.`);
-  }
 }
 
 function providerStatusLine(label, status, localStatus) {
@@ -313,12 +245,10 @@ function reportSetupCompleteness(stdout, values) {
     provider,
     status: localStatus(values, provider),
   }));
-  const complete = statuses.some(({ status }) => status.configured);
-  if (!complete) writeOutput(stdout, NO_INTEGRATION_WARNING);
-  if (!complete) {
-    for (const { provider, status } of statuses) {
-      writeOutput(stdout, providerStatusLine(PROVIDER_LABELS[provider], undefined, status));
-    }
+  if (statuses.some(({ status }) => status.configured)) return;
+  writeOutput(stdout, NO_INTEGRATION_WARNING);
+  for (const { provider, status } of statuses) {
+    writeOutput(stdout, providerStatusLine(PROVIDER_LABELS[provider], undefined, status));
   }
 }
 
@@ -336,79 +266,15 @@ async function loadCommandEnvironment(options) {
   return { env, values, filePath, file };
 }
 
-async function legacySetupCommand(options = {}) {
-  const stdin = options.stdin ?? process.stdin;
-  const stdout = options.stdout ?? process.stdout;
-  if (!stdin.isTTY) {
-    writeOutput(stdout, "Setup requires an interactive terminal. Run `ticket-analyzer-mcp setup` from a TTY.");
-    throw new Error("Setup requires an interactive terminal; refusing to read credentials from non-TTY stdin.");
-  }
-
-  const cwd = options.cwd ?? process.cwd();
-  const env = options.env ?? process.env;
-  const filePath = resolveEnvFilePath(cwd, env);
-  const existing = await readExistingEnv(filePath);
-  const promptAdapter = options.promptAdapter ?? createPromptAdapter(stdin, stdout);
-  const updates = {};
-
-  try {
-    const selected = parseProviders(await promptAdapter.providers());
-    for (const provider of selected) {
-      writeOutput(stdout, PROVIDER_GUIDANCE[provider]);
-      for (const name of PROVIDERS[provider]) {
-        if (nonEmpty(env[name])) continue;
-        const prompt = SECRET_KEYS.has(name) ? promptAdapter.password : promptAdapter.input;
-        updates[name] = await askRequired(prompt, name, existing.values[name]);
-      }
-    }
-
-    if (Object.keys(updates).length > 0) {
-      await mkdir(path.dirname(filePath), { recursive: true });
-      await writeFile(filePath, updateEnvContent(existing.content, updates), { mode: 0o600 });
-      try {
-        await chmod(filePath, 0o600);
-      } catch {
-        // Some operating systems do not support POSIX mode bits; keep setup usable there.
-      }
-      writeOutput(stdout, `Saved selected provider configuration to ${filePath}.`);
-    } else {
-      writeOutput(stdout, "No provider credentials selected; no credentials were changed.");
-    }
-
-    const finalValues = { ...existing.values, ...updates };
-    for (const [name, value] of Object.entries(env)) {
-      if (typeof value === "string") finalValues[name] = value;
-    }
-    reportSetupCompleteness(stdout, finalValues);
-
-    const clients = parseClients(await promptAdapter.client());
-    if (clients.length === 0) {
-      writeOutput(stdout, "Credentials are ready locally but no agent client has been configured yet.");
-    } else {
-      writeOutput(stdout, "Next steps (setup does not execute client CLIs or change client settings):");
-      for (const client of clients) {
-        writeOutput(stdout, `${CLIENT_LABELS[client]}:`);
-        if (client === "pi") {
-          writeOutput(stdout, "Next step for Pi: pi install -l npm:ticket-analyzer-mcp@2.3.1");
-        } else if (client === "codex") {
-          const serverCommand = "ticket-analyzer-mcp";
-          writeOutput(stdout, `Next step for Codex: codex mcp add ticket-analyzer --env ${ENV_FILE_VARIABLE}=${shellQuote(filePath)} -- ${serverCommand}`);
-        } else {
-          writeOutput(stdout, "Next step for Claude Code: install or update ticket-analyzer@ticket-analyzer-mcp from the ticket-analyzer-mcp marketplace, then restart Claude Code.");
-          writeOutput(stdout, "Install: claude plugin marketplace add ocampott/ticket-analyzer-mcp && claude plugin install ticket-analyzer@ticket-analyzer-mcp");
-          writeOutput(stdout, "Update: claude plugin marketplace update ticket-analyzer-mcp && claude plugin update ticket-analyzer@ticket-analyzer-mcp");
-        }
-      }
-    }
-  } finally {
-    promptAdapter.close?.();
-  }
-}
-
 export async function setupCommand(options = {}) {
-  if (options.setupManager) return options.setupManager(options);
-  if (options.plan || options.selections) return runSetupManager(options);
-  return legacySetupCommand(options);
+  const code = await (options.setupManager ?? runSetupManager)(options);
+  // The manager reports the plan it applied, not what the project still lacks, so the
+  // missing-provider summary stays here and outlives the credential-first path.
+  if (code === 0) {
+    const { values } = await loadCommandEnvironment(options);
+    reportSetupCompleteness(options.stdout ?? process.stdout, values);
+  }
+  return code;
 }
 
 export async function statusCommand(options = {}) {
@@ -490,7 +356,15 @@ export async function runCli(argv = process.argv.slice(2), options = {}) {
   if (command === "setup") {
     try {
       const setupArgs = parseSetupArgs(commandArgs);
-      return (await setupCommand({ ...options, ...setupArgs, setupManager: options.setupManager ?? runSetupManager, resolveExecutable: options.resolveExecutable ?? resolveExecutable, runCommand: options.runCommand ?? runCommand })) ?? 0;
+      const stdin = options.stdin ?? process.stdin;
+      return (await setupCommand({
+        ...options,
+        ...setupArgs,
+        promptAdapter: options.promptAdapter ?? (stdin.isTTY ? createPromptAdapter(stdin, stdout) : undefined),
+        setupManager: options.setupManager ?? runSetupManager,
+        resolveExecutable: options.resolveExecutable ?? resolveExecutable,
+        runCommand: options.runCommand ?? runCommand,
+      })) ?? 0;
     } catch (error) {
       if (error instanceof Error && /^Invalid setup argument:/i.test(error.message)) {
         writeOutput(stderr, `${error.message}. Run with --help for usage.`);

@@ -38,12 +38,12 @@ describe("2.3.1 release metadata and guidance", () => {
   });
 
   test("generates the confirmed Claude marketplace command", () => {
-    const cli = read("bin/cli.js");
+    const skill = read("skills/setup/SKILL.md");
 
-    expect(cli).toContain("claude plugin marketplace add ocampott/ticket-analyzer-mcp");
-    expect(cli).toContain("claude plugin install ticket-analyzer@ticket-analyzer-mcp");
-    expect(cli).not.toContain("--source github");
-    expect(cli).not.toContain("--repo ocampott/ticket-analyzer-mcp");
+    expect(skill).toContain("claude plugin marketplace add ocampott/ticket-analyzer-mcp");
+    expect(skill).toContain("claude plugin install ticket-analyzer@ticket-analyzer-mcp");
+    expect(skill).not.toContain("--source github");
+    expect(skill).not.toContain("--repo ocampott/ticket-analyzer-mcp");
   });
 
   test("requires global npm distribution for every active user setup and install guide", () => {
@@ -70,12 +70,16 @@ describe("2.3.1 release metadata and guidance", () => {
   test("keeps CLI setup published-only and removes local package-root logic", () => {
     const cli = read("bin/cli.js");
 
-    expect(cli).toContain("pi install -l npm:ticket-analyzer-mcp@2.3.1");
-    expect(cli).toContain('const serverCommand = "ticket-analyzer-mcp"');
     expect(cli).not.toContain("npx");
     expect(cli).toContain("TICKET_ANALYZER_ENV_FILE");
     expect(cli).not.toMatch(/packageRoot|PACKAGE_ROOT|resolvePackageRoot|isPublishedPackageRoot|fileURLToPath/);
     expect(cli).not.toContain("pm-mcp.js");
+  });
+
+  test("pins the published package names where the setup manager now owns them", () => {
+    expect(read("skills/setup/SKILL.md")).toContain("pi install -l npm:ticket-analyzer-mcp@2.3.1");
+    expect(read("bin/setup-adapters.js")).toContain('export const PI_PACKAGE_NAME = "ticket-analyzer-mcp"');
+    expect(read("bin/setup-files.js")).toContain('export const CODEX_COMMAND = "ticket-analyzer-mcp"');
   });
 
   test("uses the globally installed binary in the MCP template without credentials", () => {
