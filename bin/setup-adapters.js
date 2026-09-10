@@ -6,6 +6,7 @@ import {
   CODEX_TARGET_TABLE,
   acknowledgeCodexTrust,
   classifyOwnership,
+  hasDuplicateJsonKeys,
   locateCodexEntry,
   planCodexEntry,
 } from "./setup-files.js";
@@ -263,6 +264,160 @@ export class CodexAdapter {
       const removed = operation.kind === "remove" && verified?.classification === "absent";
       const registered = operation.kind !== "remove" && sameFacts(verified?.observed, operation.canonical);
       if (!removed && !registered) throw new Error("Codex project configuration post-write verification failed.");
+    }
+    await writeOwnership(operation.kind === "remove" ? null : operation.canonical);
+    return { success: true };
+  }
+}
+
+export const PI_SETTINGS_RELATIVE_PATH = ".pi/settings.json";
+export const PI_PACKAGE_NAME = "ticket-analyzer-mcp";
+export const PI_MANUAL_RECOVERY =
+  "Pi has no version-pinned safe action contract in this release; reconcile the project-local package yourself from the project root and re-run setup.";
+
+const PI_SCHEMA_VERSION = 1;
+const PI_SPEC = /^npm:([a-z0-9._-]+)@([0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?)$/;
+const plainObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+const piUnsafe = (reason) => ({ safe: false, reason });
+const piUnknown = (reason) => ({ client: "pi", classification: "unknown", reason, recovery: PI_MANUAL_RECOVERY });
+const piBlocked = (reason) => ({ client: "pi", blocked: true, reason, recovery: PI_MANUAL_RECOVERY });
+
+function piCanonical(packageVersion) {
+  return {
+    settingsPath: PI_SETTINGS_RELATIVE_PATH,
+    packageName: PI_PACKAGE_NAME,
+    packageSpec: `npm:${PI_PACKAGE_NAME}@${packageVersion}`,
+    scope: "local",
+    environmentBinding: "runtime-cwd-env",
+  };
+}
+
+/**
+ * Reads only the project's own `.pi/settings.json` and accepts it only when it matches the
+ * pinned schema below. The registry is an allowlist rather than a best-effort JSON walk, so
+ * any unrecognized layout is an explicit unknown instead of a guess.
+ */
+export class PiSettingsInspector {
+  constructor(dependencies = {}) {
+    this.readSettings = dependencies.readSettings;
+    this.maxBytes = dependencies.maxBytes ?? 64 * 1024;
+  }
+
+  async inspect({ root } = {}) {
+    if (!path.isAbsolute(root) || typeof this.readSettings !== "function") return piUnsafe("Pi settings inspection dependencies are unavailable.");
+    let file;
+    try {
+      file = await this.readSettings({ root });
+    } catch {
+      return piUnsafe("The project .pi/settings.json is unavailable for inspection.");
+    }
+    if (file === null || file === undefined) return { safe: true, present: false, entry: null, tracked: false };
+    if (!plainObject(file) || typeof file.content !== "string") return piUnsafe("The project .pi/settings.json could not be read as text.");
+    if (file.content.length > this.maxBytes) return piUnsafe("The project .pi/settings.json exceeds the bounded inspection size.");
+    if (hasDuplicateJsonKeys(file.content)) return piUnsafe("The project .pi/settings.json is malformed or contains duplicate keys.");
+
+    let parsed;
+    try {
+      parsed = JSON.parse(file.content);
+    } catch {
+      return piUnsafe("The project .pi/settings.json is not strict JSON.");
+    }
+    if (!plainObject(parsed) || Object.keys(parsed).sort().join(",") !== "packages,version") return piUnsafe("The project .pi/settings.json does not match a supported schema.");
+    if (parsed.version !== PI_SCHEMA_VERSION) return piUnsafe(`The project .pi/settings.json declares unsupported schema version ${JSON.stringify(parsed.version)}.`);
+    if (!plainObject(parsed.packages) || Object.keys(parsed.packages).join(",") !== "local" || !Array.isArray(parsed.packages.local)) {
+      return piUnsafe("The project .pi/settings.json has an unrecognized local package collection.");
+    }
+
+    const entries = [];
+    for (const entry of parsed.packages.local) {
+      if (!plainObject(entry) || Object.keys(entry).sort().join(",") !== "name,spec" || typeof entry.name !== "string" || typeof entry.spec !== "string") {
+        return piUnsafe("The project .pi/settings.json has a malformed local package entry.");
+      }
+      const match = PI_SPEC.exec(entry.spec);
+      if (!match) return piUnsafe("The project .pi/settings.json has an unsupported local package specification.");
+      if (match[1] !== entry.name) return piUnsafe("The project .pi/settings.json aliases a local package name away from its specification.");
+      entries.push(entry);
+    }
+    const targets = entries.filter((entry) => entry.name === PI_PACKAGE_NAME);
+    if (targets.length > 1) return piUnsafe("The project .pi/settings.json declares the target package more than once.");
+    return { safe: true, present: targets.length === 1, entry: targets[0] ?? null, tracked: file.tracked === true };
+  }
+}
+
+/**
+ * Classifies Pi from recognized project-local settings only. Without a version-pinned safe
+ * action contract every mutation stays manual: this adapter never infers state from human
+ * CLI output, global scope, or a filesystem package path.
+ */
+export class PiAdapter {
+  constructor(dependencies = {}) {
+    this.inspector = dependencies.inspector;
+    this.packageVersion = dependencies.packageVersion;
+    this.actionContract = dependencies.actionContract;
+  }
+
+  supportsAction(action) {
+    return Boolean(this.actionContract?.piVersion) && this.actionContract?.[action] === true;
+  }
+
+  async discover({ root, state } = {}) {
+    if (!this.inspector || typeof this.inspector.inspect !== "function") return piUnknown("Pi inspection dependencies are unavailable.");
+    const inspection = await this.inspector.inspect({ root });
+    if (!inspection.safe) return piUnknown(inspection.reason);
+    if (inspection.tracked && this.actionContract?.preservesExactBytes !== true) {
+      return piUnknown("The project .pi/settings.json is tracked and no contract proves preservation of every unrelated byte.");
+    }
+    const canonical = piCanonical(this.packageVersion);
+    const observed = inspection.present
+      ? { settingsPath: PI_SETTINGS_RELATIVE_PATH, packageName: inspection.entry.name, packageSpec: inspection.entry.spec, scope: "local", environmentBinding: "runtime-cwd-env" }
+      : { absent: true };
+    const ownership = classifyOwnership({ client: "pi", state, observed, canonical });
+    return {
+      client: "pi",
+      root,
+      settingsPath: PI_SETTINGS_RELATIVE_PATH,
+      observed,
+      canonical,
+      ...ownership,
+      recovery: ownership.classification === "unknown" ? PI_MANUAL_RECOVERY : undefined,
+    };
+  }
+
+  buildOperation({ discovery, decision, intent = "add" } = {}) {
+    if (!discovery || discovery.classification === "unknown") return piBlocked(discovery?.reason ?? PI_MANUAL_RECOVERY);
+    const canonical = discovery.canonical ?? piCanonical(this.packageVersion);
+    const base = { client: "pi", root: discovery.root, settingsPath: PI_SETTINGS_RELATIVE_PATH, canonical };
+
+    if (intent === "remove") {
+      if (discovery.classification !== "owned") return piBlocked("Only an owned Pi local package integration can be removed.");
+      if (!this.supportsAction("remove")) return piBlocked(PI_MANUAL_RECOVERY);
+      return { ...base, kind: "remove", argv: ["remove", "-l", `npm:${PI_PACKAGE_NAME}`], before: discovery.observed, after: null };
+    }
+    if (discovery.classification === "matching" && decision !== "adopt") return piBlocked("Adopt the matching Pi local package integration explicitly.");
+    if (discovery.classification === "foreign" && decision !== "replace") return piBlocked("Replace the foreign Pi local package integration explicitly.");
+    if (discovery.classification === "matching") return { ...base, kind: "adopt", argv: [], before: discovery.observed, after: canonical };
+    if (!this.supportsAction("install")) return piBlocked(PI_MANUAL_RECOVERY);
+    return { ...base, kind: discovery.classification === "foreign" ? "replace" : "add", argv: ["install", "-l", canonical.packageSpec], before: discovery.observed ?? null, after: canonical };
+  }
+
+  async execute(operation, dependencies = {}) {
+    if (operation?.blocked || operation?.client !== "pi") throw new Error("Pi operation is blocked.");
+    const ensureIgnoreRule = dependencies.ensureIgnoreRule ?? (async () => {});
+    const writeOwnership = dependencies.writeOwnership ?? (async () => {});
+    if (operation.kind !== "remove") await ensureIgnoreRule();
+    if (operation.kind !== "adopt") {
+      const runner = dependencies.runCommand;
+      const executable = operation.executable ?? dependencies.executable;
+      if (typeof runner !== "function" || !executable) throw new Error("Pi command runner is unavailable.");
+      try {
+        await runner(executable, operation.argv, { cwd: operation.root, shell: false, clientEnv: safeChildEnvironment(dependencies.environment), maxOutputBytes: 16 * 1024, timeoutMs: 60_000 });
+      } catch {
+        throw new Error("Pi local package action failed; reconcile the project-local package manually.");
+      }
+      const verified = await this.discover({ root: operation.root, state: dependencies.state });
+      const removed = operation.kind === "remove" && verified?.classification === "absent";
+      const installed = operation.kind !== "remove" && sameFacts(verified?.observed, operation.canonical);
+      if (!removed && !installed) throw new Error("Pi local package post-action verification failed.");
     }
     await writeOwnership(operation.kind === "remove" ? null : operation.canonical);
     return { success: true };

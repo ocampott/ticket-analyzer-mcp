@@ -35,9 +35,25 @@ import {
   resolveProjectRoot,
   setupCommand,
 } from "./setup-manager.js";
-import { ClaudeAdapter, CodexAdapter, inspectClaudeProjectConfig, renderClaudeOperation } from "./setup-adapters.js";
+import {
+  ClaudeAdapter,
+  CodexAdapter,
+  PiAdapter,
+  PiSettingsInspector,
+  PI_MANUAL_RECOVERY,
+  PI_SETTINGS_RELATIVE_PATH,
+  inspectClaudeProjectConfig,
+  renderClaudeOperation,
+} from "./setup-adapters.js";
 
 const ENOENT = () => Object.assign(new Error("missing"), { code: "ENOENT" });
+// Bound a source-boundary assertion to one declaration so it cannot silently widen to
+// whatever module code happens to follow it.
+function declarationSource(source, marker) {
+  const body = source.slice(source.indexOf(marker));
+  const next = body.indexOf("\nexport ", 1);
+  return next === -1 ? body : body.slice(0, next);
+}
 function memoryFs(entries, canonical = "/workspace/repo") {
   return {
     async realpath(value) { return value === "/workspace/link" ? canonical : value; },
@@ -623,6 +639,102 @@ describe("setup manager PR 1 guardrails", () => {
     });
   });
 
+  describe("PR 7 Pi project-local inspection boundary", () => {
+    const root = "/repo";
+    const version = "2.3.1";
+    const spec = `npm:ticket-analyzer-mcp@${version}`;
+    const settings = (local) => JSON.stringify({ version: 1, packages: { local } });
+    const piFacts = { settingsPath: PI_SETTINGS_RELATIVE_PATH, packageName: "ticket-analyzer-mcp", packageSpec: spec, scope: "local", environmentBinding: "runtime-cwd-env" };
+    const inspectorFor = (content, tracked = false) => new PiSettingsInspector({ readSettings: async () => (content === null ? null : { content, tracked }) });
+    const adapterFor = (content, { tracked = false, actionContract } = {}) => new PiAdapter({ inspector: inspectorFor(content, tracked), packageVersion: version, actionContract });
+
+    test("accepts the pinned schema and classifies absent, matching, foreign, and owned entries", async () => {
+      const absent = await adapterFor(settings([])).discover({ root });
+      const missingFile = await adapterFor(null).discover({ root });
+      const matching = await adapterFor(settings([{ name: "ticket-analyzer-mcp", spec }])).discover({ root });
+      const foreign = await adapterFor(settings([{ name: "ticket-analyzer-mcp", spec: "npm:ticket-analyzer-mcp@1.0.0" }])).discover({ root });
+      const owned = await adapterFor(settings([{ name: "ticket-analyzer-mcp", spec }])).discover({ root, state: buildOwnershipState(root, { pi: piFacts }) });
+      expect([absent.classification, missingFile.classification, matching.classification, foreign.classification, owned.classification])
+        .toEqual(["absent", "absent", "matching", "foreign", "owned"]);
+      expect(matching.observed).toMatchObject(piFacts);
+    });
+
+    test.each([
+      ["JSONC comments", '{ // hi\n"version": 1, "packages": { "local": [] } }'],
+      ["duplicate keys", '{"version":1,"packages":{"local":[]},"packages":{"local":[]}}'],
+      ["an unsupported schema version", JSON.stringify({ version: 2, packages: { local: [] } })],
+      ["an unrecognized collection layout", JSON.stringify({ version: 1, packages: { global: [] } })],
+      ["an unexpected top-level key", JSON.stringify({ version: 1, packages: { local: [] }, extra: true })],
+      ["a malformed entry", JSON.stringify({ version: 1, packages: { local: [{ name: "ticket-analyzer-mcp" }] } })],
+      ["an aliased entry", JSON.stringify({ version: 1, packages: { local: [{ name: "ta", spec: "npm:ticket-analyzer-mcp@2.3.1" }] } })],
+      ["duplicate target identities", JSON.stringify({ version: 1, packages: { local: [{ name: "ticket-analyzer-mcp", spec: "npm:ticket-analyzer-mcp@2.3.1" }, { name: "ticket-analyzer-mcp", spec: "npm:ticket-analyzer-mcp@1.0.0" }] } })],
+    ])("treats %s as unknown and exits safely", async (_case, content) => {
+      const discovery = await adapterFor(content).discover({ root });
+      expect(discovery).toMatchObject({ classification: "unknown", recovery: PI_MANUAL_RECOVERY });
+      expect(adapterFor(content).buildOperation({ discovery })).toMatchObject({ blocked: true });
+    });
+
+    test("keeps add, replace, and remove manual while no version-pinned action contract exists", async () => {
+      const absent = adapterFor(settings([]));
+      const foreignAdapter = adapterFor(settings([{ name: "ticket-analyzer-mcp", spec: "npm:ticket-analyzer-mcp@1.0.0" }]));
+      const add = absent.buildOperation({ discovery: await absent.discover({ root }) });
+      const replace = foreignAdapter.buildOperation({ discovery: await foreignAdapter.discover({ root }), decision: "replace" });
+      const owned = adapterFor(settings([{ name: "ticket-analyzer-mcp", spec }]));
+      const remove = owned.buildOperation({ discovery: await owned.discover({ root, state: buildOwnershipState(root, { pi: piFacts }) }), intent: "remove" });
+      for (const operation of [add, replace, remove]) {
+        expect(operation).toMatchObject({ blocked: true, recovery: PI_MANUAL_RECOVERY });
+        expect(operation.argv).toBeUndefined();
+      }
+    });
+
+    test("adopting a matching entry writes only the sidecar, after the ignore rule and without rewriting settings", async () => {
+      const events = [];
+      const writeSettings = jest.fn();
+      const adapter = adapterFor(settings([{ name: "ticket-analyzer-mcp", spec }]));
+      const operation = adapter.buildOperation({ discovery: await adapter.discover({ root }), decision: "adopt" });
+      expect(operation).toMatchObject({ kind: "adopt", client: "pi" });
+      await expect(adapter.execute(operation, {
+        ensureIgnoreRule: async () => events.push("ignore"),
+        writeOwnership: async (facts) => events.push({ step: "sidecar", facts }),
+        writeSettings,
+      })).resolves.toEqual({ success: true });
+      expect(events.map((event) => event.step ?? event)).toEqual(["ignore", "sidecar"]);
+      expect(events[1].facts).toMatchObject(piFacts);
+      expect(writeSettings).not.toHaveBeenCalled();
+    });
+
+    test("requires an explicit adoption and blocks tracked settings without an exact-preservation contract", async () => {
+      const adapter = adapterFor(settings([{ name: "ticket-analyzer-mcp", spec }]));
+      expect(adapter.buildOperation({ discovery: await adapter.discover({ root }) })).toMatchObject({ blocked: true, reason: expect.stringMatching(/adopt/i) });
+      const tracked = adapterFor(settings([{ name: "ticket-analyzer-mcp", spec }]), { tracked: true });
+      const discovery = await tracked.discover({ root });
+      expect(discovery).toMatchObject({ classification: "unknown", reason: expect.stringMatching(/tracked/i) });
+    });
+
+    test("treats a sidecar that disagrees with the project entry as unknown", async () => {
+      const stale = await adapterFor(settings([{ name: "ticket-analyzer-mcp", spec: "npm:ticket-analyzer-mcp@1.0.0" }]))
+        .discover({ root, state: buildOwnershipState(root, { pi: piFacts }) });
+      expect(stale).toMatchObject({ classification: "unknown", recovery: PI_MANUAL_RECOVERY });
+    });
+
+    test("renders exact shell-free local argv only when a version-pinned contract is supplied", async () => {
+      const actionContract = { piVersion: "9.9.9", install: true, remove: true };
+      const adapter = adapterFor(settings([]), { actionContract });
+      const add = adapter.buildOperation({ discovery: await adapter.discover({ root }) });
+      expect(add).toMatchObject({ kind: "add", argv: ["install", "-l", spec] });
+      const ownedAdapter = adapterFor(settings([{ name: "ticket-analyzer-mcp", spec }]), { actionContract });
+      const remove = ownedAdapter.buildOperation({ discovery: await ownedAdapter.discover({ root, state: buildOwnershipState(root, { pi: piFacts }) }), intent: "remove" });
+      expect(remove).toMatchObject({ kind: "remove", argv: ["remove", "-l", "npm:ticket-analyzer-mcp"] });
+    });
+
+    test("never infers state from pi list, global scope, or a filesystem package path", async () => {
+      const source = String(await readFile(new URL("./setup-adapters.js", import.meta.url), "utf8"));
+      const piSection = [declarationSource(source, "class PiSettingsInspector"), declarationSource(source, "class PiAdapter")].join("\n");
+      expect(piSection).not.toMatch(/"list"|pi list|--global|\s-g\b|file:|npm install/);
+      expect(piSection).not.toMatch(/homedir|PI_HOME|process\.env/);
+    });
+  });
+
   describe("PR 6 Codex reconciliation wiring", () => {
     const root = "/repo";
     const envFile = "/repo/.env";
@@ -730,7 +842,7 @@ describe("setup manager PR 1 guardrails", () => {
     test("keeps Codex authority inside the project file and out of any subprocess or home path", async () => {
       const source = String(await readFile(new URL("./setup-adapters.js", import.meta.url), "utf8"));
       expect(source).not.toMatch(/CODEX_HOME|homedir|trusted_projects/);
-      expect(source.slice(source.indexOf("class CodexAdapter"))).not.toMatch(/runCommand|resolveExecutable|spawn/);
+      expect(declarationSource(source, "class CodexAdapter")).not.toMatch(/runCommand|resolveExecutable|spawn/);
     });
 
     test("a blocked Codex client leaves independently selected operations planned", async () => {
