@@ -427,6 +427,51 @@ describe("setup manager PR 1 guardrails", () => {
         });
   });
 
+  describe("PR 4 Claude manager wiring", () => {
+    const root = "/repo";
+
+    test("uses the default safe project-config inspection for an absent Claude config", async () => {
+      const filesystem = { ...memoryFs({ [root]: "dir", [path.join(root, ".git")]: "file" }), readFile: async () => { throw ENOENT(); } };
+      const runCommand = jest.fn().mockResolvedValue({ stdout: "null", stderr: "" });
+      const output = [];
+      const result = await setupCommand({
+        cwd: root,
+        filesystem,
+        stdin: { isTTY: false },
+        stdout: { isTTY: false, write: (text) => output.push(text) },
+        selections: { providers: [], clients: ["claude"] },
+        dryRun: true,
+        environment: { PATH: "/safe" },
+        resolveExecutable: async () => "/bin/claude",
+        runCommand,
+      });
+      expect(result).toBe(0);
+      expect(runCommand).toHaveBeenCalledWith("/bin/claude", ["mcp", "get", "ticket-analyzer", "--scope", "project", "--output", "json"], expect.objectContaining({ shell: false, cwd: root }));
+      expect(output.join(" ")).toMatch(/Client claude: add/i);
+    });
+
+    test("plans an absent concrete Claude fixture as an add without invoking a mutation", async () => {
+      const output = [];
+      const runCommand = jest.fn().mockResolvedValue({ stdout: "null", stderr: "" });
+      const result = await setupCommand({
+        cwd: root,
+        filesystem: memoryFs({ [root]: "dir", [path.join(root, ".git")]: "file" }),
+        stdin: { isTTY: false },
+        stdout: { isTTY: false, write: (text) => output.push(text) },
+        selections: { providers: [], clients: ["claude"] },
+        dryRun: true,
+        environment: { PATH: "/safe" },
+        resolveExecutable: async () => "/bin/claude",
+        runCommand,
+        inspectProjectConfig: async () => ({ safe: true, tracked: false }),
+      });
+      expect(result).toBe(0);
+      expect(runCommand).toHaveBeenCalledWith("/bin/claude", ["mcp", "get", "ticket-analyzer", "--scope", "project", "--output", "json"], expect.objectContaining({ shell: false, cwd: root }));
+      expect(output.join(" ")).toMatch(/Client claude: add/i);
+      expect(output.join(" ")).not.toMatch(/plugin|marketplace|AGENTS/i);
+    });
+  });
+
       describe("PR 3 interaction safety remediation", () => {
     test.each([
       ["stdin", { stdin: { isTTY: false }, stdout: { isTTY: true } }],

@@ -8,6 +8,7 @@ import {
   inspectSidecarIgnoreRuleFile,
   resolveManagedEnvPath,
 } from "./setup-files.js";
+import { ClaudeAdapter, inspectClaudeProjectConfig } from "./setup-adapters.js";
 
 const notFound = (error) => error?.code === "ENOENT";
 const nativeFilesystem = { lstat: nativeLstat, realpath: nativeRealpath, readFile: nativeReadFile };
@@ -336,6 +337,68 @@ function writeOutput(stdout, text) {
   stdout.write(`${text}\n`);
 }
 
+function clientAdapter(client, adapters, dependencies) {
+  if (adapters?.[client]) return adapters[client];
+  if (client !== "claude") return null;
+  return new ClaudeAdapter({
+    resolveExecutable: dependencies.resolveExecutable,
+    runCommand: dependencies.runCommand,
+    inspectProjectConfig: dependencies.inspectProjectConfig ?? ((context) => inspectClaudeProjectConfig({ ...context, filesystem: dependencies.filesystem })),
+  });
+}
+
+async function discoverClientOperations({
+  clients = [],
+  root,
+  state,
+  environment = {},
+  decisions = {},
+  intents = {},
+  adapters = {},
+  dependencies = {},
+} = {}) {
+  const clientOperations = [];
+  const blockedOperations = [];
+  const operations = [];
+  const discoveries = {};
+
+  for (const client of clients) {
+    const adapter = clientAdapter(client, adapters, dependencies);
+    if (!adapter) {
+      blockedOperations.push({ client, reason: "Client-specific discovery is not enabled in this work unit; rerun setup after the client adapter is available." });
+      continue;
+    }
+    let discovery;
+    try {
+      discovery = await adapter.discover({ root, state, environment });
+    } catch {
+      blockedOperations.push({ client, reason: "Client discovery failed safely; recover the project registration manually." });
+      continue;
+    }
+    discoveries[client] = discovery;
+    const operation = adapter.buildOperation({ discovery, decision: decisions[client], intent: intents[client] ?? "add" });
+    if (operation?.blocked) {
+      blockedOperations.push({ client, reason: operation.reason ?? discovery?.reason ?? "Client operation is unavailable." });
+      continue;
+    }
+    clientOperations.push(operation);
+    operations.push({
+      ...operation,
+      id: client,
+      execute: async () => adapter.execute(operation, {
+        state,
+        environment,
+        runCommand: dependencies.runCommand,
+        ensureIgnoreRule: dependencies.ensureIgnoreRule,
+        writeOwnership: dependencies.writeOwnership,
+        discover: async ({ root: operationRoot }) => adapter.discover({ root: operationRoot, state, environment }),
+      }),
+    });
+  }
+
+  return { clientOperations, blockedOperations, operations, discoveries };
+}
+
 export async function setupCommand(options = {}) {
   const stdin = options.stdin ?? process.stdin;
   const stdout = options.stdout ?? process.stdout;
@@ -409,21 +472,38 @@ export async function setupCommand(options = {}) {
     if (clients.length) {
       try { ignore = await inspectSidecarIgnoreRuleFile({ root, filesystem }); ignoreBefore = ignore.before; } catch (error) { ignore = { safe: false, reason: error.message }; }
     }
-    const blockedOperations = clients.map((client) => ({ client, reason: "Client-specific discovery is not enabled in this work unit; rerun setup after the client adapter is available." }));
+    const clientPlan = await discoverClientOperations({
+      clients,
+      root,
+      state: options.state,
+      environment: options.environment ?? options.env ?? process.env,
+      decisions: options.decisions,
+      intents: options.clientIntents,
+      adapters: options.adapters,
+      dependencies: {
+        resolveExecutable: options.resolveExecutable,
+        runCommand: options.runCommand,
+        inspectProjectConfig: options.inspectProjectConfig,
+        filesystem,
+        ensureIgnoreRule: options.ensureIgnoreRule,
+        writeOwnership: options.writeOwnership,
+      },
+    });
     return buildPlan({
       root,
       envPath,
       selections: { providers, clients },
       providerOperations,
+      clientOperations: clientPlan.clientOperations,
       files: {
         env: { path: envPath, diff: providerOperations.map((operation) => operation.redactedDiff).filter(Boolean).join("\\n") },
         ...(clients.length ? { ignore: { path: path.join(root, ".gitignore"), diff: ignore?.diff ?? "", action: ignore?.action } } : {}),
       },
-      blockedOperations,
+      blockedOperations: clientPlan.blockedOperations,
       decisions: options.decisions ?? {},
-      snapshots: { env: envBefore, ignore: ignoreBefore, selections: { providers, clients } },
+      snapshots: { env: envBefore, ignore: ignoreBefore, selections: { providers, clients }, clientDiscovery: clientPlan.discoveries },
       secretInputs,
-      operations: options.operations ?? [],
+      operations: options.operations ?? clientPlan.operations,
     });
   };
   const plan = await makePlan();

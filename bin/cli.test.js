@@ -350,36 +350,33 @@ describe("ticket-analyzer CLI", () => {
     expect(output.join(" ")).toMatch(/does not execute client CLIs/i);
   });
 
-  test("dry-run prints a plan without confirmations or child processes", async () => {
+  test("legacy setup keeps marketplace and plugin actions manual even when client configuration is requested", async () => {
     const output = [];
-    const promptAdapter = {
-      providers: jest.fn().mockResolvedValue([]),
-      client: jest.fn().mockResolvedValue(["claude", "codex", "pi"]),
-      confirmClient: jest.fn(),
-    };
     const runCommand = jest.fn();
-
     await setupCommand({
       cwd: await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-")),
       env: {},
       stdin: { isTTY: true },
       stdout: { write: (text) => output.push(text) },
-      promptAdapter,
+      promptAdapter: {
+        providers: jest.fn().mockResolvedValue([]),
+        client: jest.fn().mockResolvedValue(["claude"]),
+        confirmClient: jest.fn().mockResolvedValue(true),
+      },
       configureClients: true,
-      dryRun: true,
-      resolveExecutable: jest.fn().mockImplementation((name) => `/usr/local/bin/${name}`),
+      resolveExecutable: jest.fn().mockReturnValue("/bin/claude"),
       runCommand,
     });
-
-    const text = output.join(" ");
-    expect(text).toMatch(/client configuration plan/i);
-    expect(text).toMatch(/available.*Claude Code/i);
-    expect(text).toContain("claude plugin marketplace add ocampott/ticket-analyzer-mcp");
-    expect(text).toContain("codex mcp add ticket-analyzer");
-    expect(text).toContain("pi install -l npm:ticket-analyzer-mcp@2.3.1");
-    expect(text).toMatch(/dry-run.*does not configure clients/i);
-    expect(promptAdapter.confirmClient).not.toHaveBeenCalled();
     expect(runCommand).not.toHaveBeenCalled();
+    expect(output.join(" ")).toMatch(/marketplace.*manual|manual.*marketplace/i);
+  });
+
+  test("setup dry-run delegates the unified manager instead of legacy client commands", async () => {
+    const setupManager = jest.fn().mockResolvedValue(0);
+
+    await expect(runCli(["setup", "--dry-run"], { setupManager })).resolves.toBe(0);
+
+    expect(setupManager).toHaveBeenCalledWith(expect.objectContaining({ configureClients: false, dryRun: true }));
   });
 
   test("unavailable clients are reported without confirmation and remain nonfatal", async () => {
@@ -408,49 +405,12 @@ describe("ticket-analyzer CLI", () => {
     expect(runCommand).not.toHaveBeenCalled();
   });
 
-  test("executes only confirmed clients with exact argument vectors and shell disabled", async () => {
-    const output = [];
-    const calls = [];
-    const promptAdapter = {
-      providers: jest.fn().mockResolvedValue([]),
-      client: jest.fn().mockResolvedValue(["claude", "codex", "pi"]),
-      confirmClient: jest.fn().mockImplementation(({ client }) => client !== "codex"),
-    };
-    const runCommand = jest.fn(async (file, args, options) => {
-      calls.push({ file, args, options });
-    });
+  test("setup compatibility alias delegates the same unified manager contract", async () => {
+    const setupManager = jest.fn().mockResolvedValue(0);
 
-    const result = await setupCommand({
-      cwd: await mkdtemp(path.join(os.tmpdir(), "ticket-analyzer-cli-")),
-      env: {},
-      stdin: { isTTY: true },
-      stdout: { write: (text) => output.push(text) },
-      promptAdapter,
-      configureClients: true,
-      resolveExecutable: jest.fn().mockImplementation((name) => `/bin/${name}`),
-      runCommand,
-    });
+    await expect(runCli(["setup", "--configure-clients"], { setupManager })).resolves.toBe(0);
 
-    expect(result).toBe(0);
-    expect(promptAdapter.confirmClient).toHaveBeenCalledTimes(3);
-    expect(calls).toEqual([
-      {
-        file: "/bin/claude",
-        args: ["plugin", "marketplace", "add", "ocampott/ticket-analyzer-mcp"],
-        options: expect.objectContaining({ shell: false }),
-      },
-      {
-        file: "/bin/claude",
-        args: ["plugin", "install", "ticket-analyzer@ticket-analyzer-mcp"],
-        options: expect.objectContaining({ shell: false }),
-      },
-      {
-        file: "/bin/pi",
-        args: ["install", "-l", "npm:ticket-analyzer-mcp@2.3.1"],
-        options: expect.objectContaining({ shell: false }),
-      },
-    ]);
-    expect(calls.some(({ options }) => options.shell === true)).toBe(false);
+    expect(setupManager).toHaveBeenCalledWith(expect.objectContaining({ configureClients: true, dryRun: false }));
   });
 
   test("continues after a client failure and returns nonzero", async () => {
@@ -458,12 +418,12 @@ describe("ticket-analyzer CLI", () => {
     const attempted = [];
     const promptAdapter = {
       providers: jest.fn().mockResolvedValue([]),
-      client: jest.fn().mockResolvedValue(["claude", "codex"]),
+      client: jest.fn().mockResolvedValue(["codex", "pi"]),
       confirmClient: jest.fn().mockResolvedValue(true),
     };
     const runCommand = jest.fn(async (file) => {
       attempted.push(file);
-      if (file === "/bin/claude") throw new Error("client failed");
+      if (file === "/bin/codex") throw new Error("client failed");
     });
 
     const result = await setupCommand({
@@ -479,9 +439,8 @@ describe("ticket-analyzer CLI", () => {
     });
 
     expect(result).toBe(1);
-    expect(attempted).toContain("/bin/claude");
-    expect(attempted).toContain("/bin/codex");
-    expect(output.join(" ")).toMatch(/Claude Code.*failed/i);
+    expect(attempted).toEqual(["/bin/codex", "/bin/pi"]);
+    expect(output.join(" ")).toMatch(/OpenAI Codex.*failed/i);
   });
 
   test("redacts provider values in errors and quotes env paths in the plan", async () => {
@@ -627,7 +586,7 @@ describe("ticket-analyzer CLI", () => {
       const output = [];
       const promptAdapter = {
         providers: jest.fn().mockResolvedValue([]),
-        client: jest.fn().mockResolvedValue(["claude", "codex"]),
+        client: jest.fn().mockResolvedValue(["codex", "pi"]),
         confirmClient: jest.fn().mockResolvedValue(true),
       };
       const setupPromise = setupCommand({
@@ -649,7 +608,7 @@ describe("ticket-analyzer CLI", () => {
       expect(result).toBe(1);
       expect(children[0].kill).toHaveBeenCalledTimes(1);
       expect(spawnProcess).toHaveBeenCalledTimes(2);
-      expect(spawnProcess.mock.calls[1][1][0]).toBe("mcp");
+      expect(spawnProcess.mock.calls[1][1][0]).toBe("install");
       expect(output.join(" ")).toMatch(/timed out after 25ms/i);
     } finally {
       jest.useRealTimers();
@@ -711,6 +670,15 @@ describe("ticket-analyzer CLI", () => {
     expect(calls[0]).toEqual(expect.objectContaining({ configureClients: false, dryRun: false }));
     expect(calls[1]).toEqual(expect.objectContaining({ configureClients: true, dryRun: false }));
     expect(calls[2]).toEqual(expect.objectContaining({ configureClients: false, dryRun: true }));
+  });
+
+  test("runCli supplies hardened defaults to the unified setup manager", async () => {
+    const setupManager = jest.fn().mockResolvedValue(0);
+    await expect(runCli(["setup"], { setupManager })).resolves.toBe(0);
+    expect(setupManager).toHaveBeenCalledWith(expect.objectContaining({
+      resolveExecutable,
+      runCommand,
+    }));
   });
 
 test("dry-run with explicit selections renders without prompts, writes, or spawns", async () => {

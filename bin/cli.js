@@ -103,10 +103,7 @@ const CLIENT_RESTART_GUIDANCE = {
   pi: "Restart or reload Pi after installation.",
 };
 const CLIENT_COMMANDS = {
-  claude: () => [
-    ["plugin", "marketplace", "add", "ocampott/ticket-analyzer-mcp"],
-    ["plugin", "install", "ticket-analyzer@ticket-analyzer-mcp"],
-  ],
+  claude: () => [],
   codex: (filePath) => [
     ["mcp", "add", "ticket-analyzer", "--env", `${ENV_FILE_VARIABLE}=${filePath}`, "--", "ticket-analyzer-mcp"],
   ],
@@ -406,6 +403,10 @@ async function configureSelectedClients({ clients, filePath, cwd, env, finalValu
   const secretValues = secretValuesFrom(finalValues);
   let failed = false;
   for (const client of clients) {
+    if (client === "claude") {
+      writeOutput(stdout, "Claude marketplace and plugin actions remain manual; setup manages only the project MCP registration.");
+      continue;
+    }
     const target = available.get(client);
     if (!target) continue;
     const confirmed = await promptAdapter.confirmClient({
@@ -606,7 +607,7 @@ export async function runCli(argv = process.argv.slice(2), options = {}) {
   if (command === "setup") {
     try {
       const setupArgs = parseSetupArgs(commandArgs);
-      return (await setupCommand({ ...options, ...setupArgs, setupManager: options.setupManager ?? runSetupManager })) ?? 0;
+      return (await setupCommand({ ...options, ...setupArgs, setupManager: options.setupManager ?? runSetupManager, resolveExecutable: options.resolveExecutable ?? resolveExecutable, runCommand: options.runCommand ?? runCommand })) ?? 0;
     } catch (error) {
       if (error instanceof Error && /^Invalid setup argument:/i.test(error.message)) {
         writeOutput(stderr, `${error.message}. Run with --help for usage.`);

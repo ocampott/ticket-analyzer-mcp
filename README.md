@@ -36,6 +36,10 @@ ticket-analyzer-mcp setup --configure-clients --dry-run
 
 El modo normal detecta Claude Code, Codex y Pi en `PATH`, muestra un plan no secreto y pide una confirmación por cada cliente disponible seleccionado. Las CLI se ejecutan con un entorno limitado y sin credenciales de proveedores. `--dry-run` muestra el mismo plan, no pide confirmaciones ni ejecuta procesos de clientes; puede escribir `.env` si seleccionás proveedores. El `setup` legado no detecta ni configura clientes. El wizard no inspecciona, reemplaza ni elimina registros existentes: actualizá manualmente cuando corresponda y reiniciá el cliente después de configurar o actualizarlo.
 
+#### Claude Code
+
+El administrador solo posee el registro MCP de proyecto `ticket-analyzer` de Claude y le asigna la ruta absoluta del `.env` del proyecto. El marketplace, los plugins y `AGENTS.md` siguen siendo responsabilidad manual y nunca son instalados, eliminados ni registrados por el administrador.
+
 Para actualizar la versión central:
 
 ```bash
@@ -101,6 +105,10 @@ ticket-analyzer-mcp setup --configure-clients --dry-run
 ```
 
 Normal mode detects available clients, prints a non-secret plan, and executes only confirmed commands. Client CLIs run with a limited environment and no provider credentials. `--dry-run` prints the same plan without confirmations or child processes; it may write `.env` when providers are selected. The legacy `ticket-analyzer-mcp setup` remains credential-only and never detects or configures clients. The wizard does not inspect, replace, or remove existing registrations; update them manually when needed and restart the client after configuration or updates. Keep provider credentials in the project `.env`; `TICKET_ANALYZER_ENV_FILE` may point to another file and real environment variables take precedence.
+
+#### Claude Code
+
+The manager owns only Claude's `ticket-analyzer` project MCP registration and binds it to the project's absolute `.env` path. Marketplace and plugin actions, plus `AGENTS.md`, remain manual responsibilities and are never installed, removed, or recorded by the manager.
 
 ### Manual recovery
 
