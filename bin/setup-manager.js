@@ -10,7 +10,7 @@ import {
   resolveManagedEnvPath,
   validateProjectPath,
 } from "./setup-files.js";
-import { ClaudeAdapter, CodexAdapter, inspectClaudeProjectConfig } from "./setup-adapters.js";
+import { ClaudeAdapter, CodexAdapter, PiAdapter, PiSettingsInspector, PI_SETTINGS_RELATIVE_PATH, inspectClaudeProjectConfig } from "./setup-adapters.js";
 
 const notFound = (error) => error?.code === "ENOENT";
 const nativeFilesystem = { lstat: nativeLstat, realpath: nativeRealpath, readFile: nativeReadFile };
@@ -347,12 +347,30 @@ function clientAdapter(client, adapters, dependencies) {
       writeConfig: dependencies.writeCodexConfig,
     });
   }
+  if (client === "pi") {
+    return new PiAdapter({
+      inspector: new PiSettingsInspector({ readSettings: dependencies.readPiSettings ?? ((context) => readPiProjectSettings({ ...context, filesystem: dependencies.filesystem })) }),
+      packageVersion: dependencies.packageVersion,
+      actionContract: dependencies.piActionContract,
+    });
+  }
   if (client !== "claude") return null;
   return new ClaudeAdapter({
     resolveExecutable: dependencies.resolveExecutable,
     runCommand: dependencies.runCommand,
     inspectProjectConfig: dependencies.inspectProjectConfig ?? ((context) => inspectClaudeProjectConfig({ ...context, filesystem: dependencies.filesystem })),
   });
+}
+
+async function readPiProjectSettings({ root, filesystem = nativeFilesystem }) {
+  const target = path.join(root, PI_SETTINGS_RELATIVE_PATH);
+  await validateProjectPath(root, target, filesystem);
+  try {
+    return { content: String(await (filesystem.readFile ?? nativeReadFile)(target, "utf8")), tracked: false };
+  } catch (error) {
+    if (notFound(error)) return null;
+    throw error;
+  }
 }
 
 async function readCodexProjectConfig({ root, filesystem = nativeFilesystem }) {
@@ -507,6 +525,9 @@ export async function setupCommand(options = {}) {
         inspectProjectConfig: options.inspectProjectConfig,
         readCodexConfig: options.readCodexConfig,
         writeCodexConfig: options.writeCodexConfig,
+        readPiSettings: options.readPiSettings,
+        packageVersion: options.packageVersion,
+        piActionContract: options.piActionContract,
         filesystem,
         ensureIgnoreRule: options.ensureIgnoreRule,
         writeOwnership: options.writeOwnership,

@@ -204,7 +204,7 @@ export function buildOwnershipState(projectRoot, clients = {}) {
   return state;
 }
 
-function hasDuplicateJsonKeys(source) {
+export function hasDuplicateJsonKeys(source) {
   let index = 0;
   const whitespace = () => { while (/\s/.test(source[index] ?? "")) index += 1; };
   const string = () => {
