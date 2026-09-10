@@ -23,18 +23,24 @@ ticket-analyzer-mcp doctor
 ticket-analyzer-mcp
 ```
 
-`setup` guarda las credenciales en el `.env` ignorado del proyecto, conserva las claves existentes y no modifica la configuración del cliente. `status` es local y `doctor` puede consultar los proveedores.
+`setup` planifica proveedores y clientes en una sola pasada: guarda las credenciales en el `.env` ignorado del proyecto, conserva las claves existentes y reconcilia solo los registros que administra. `status` es local y `doctor` puede consultar los proveedores.
 
-### Configuración opt-in de clientes
+### Cómo funciona `setup`
 
-Después de la fase de credenciales, usá este wizard como método principal para configurar solo los clientes que elijas:
+`setup` muestra un plan completo sin secretos y pide **una sola confirmación para todo el plan**. Recién ahí ejecuta, siempre en el mismo orden: el `.env` del proyecto, la regla de ignore, y después Claude Code, Codex y Pi.
 
 ```bash
-ticket-analyzer-mcp setup --configure-clients
-ticket-analyzer-mcp setup --configure-clients --dry-run
+ticket-analyzer-mcp setup
+ticket-analyzer-mcp setup --dry-run
 ```
 
-El modo normal detecta Claude Code, Codex y Pi en `PATH`, muestra un plan no secreto y pide una confirmación por cada cliente disponible seleccionado. Las CLI se ejecutan con un entorno limitado y sin credenciales de proveedores. `--dry-run` muestra el mismo plan, no pide confirmaciones ni ejecuta procesos de clientes; puede escribir `.env` si seleccionás proveedores. El `setup` legado no detecta ni configura clientes. El wizard no inspecciona, reemplaza ni elimina registros existentes: actualizá manualmente cuando corresponda y reiniciá el cliente después de configurar o actualizarlo.
+`--dry-run` muestra el mismo plan y no escribe nada ni ejecuta ningún proceso hijo. `--configure-clients` se sigue aceptando como alias de compatibilidad, pero ya no cambia nada: la configuración de clientes es parte del flujo normal.
+
+Antes de proponer cada cambio, el manager inspecciona lo que ya existe y lo clasifica como propio, coincidente, ajeno, ausente o desconocido. Adoptar un registro coincidente o reemplazar uno ajeno requiere una decisión explícita, y eliminar algo requiere pedirlo explícitamente. Un estado desconocido nunca habilita una acción: el manager frena y explica cómo recuperarlo a mano.
+
+Si una etapa falla, el manager corta ahí y **no revierte nada automáticamente**. El reporte dice qué quedó aplicado, qué falló y qué no se intentó, para que sepas exactamente en qué estado quedó el proyecto. Un cliente bloqueado no impide que se apliquen los demás.
+
+Las CLI de clientes se ejecutan con un entorno limitado y sin credenciales de proveedores. En Windows, `shell: false` no puede usar shims `.cmd` ni `.bat`: hace falta un ejecutable directo.
 
 #### Claude Code
 
@@ -57,7 +63,7 @@ La alternativa aislada es instalar explícitamente en un proyecto: `npm install 
 
 ### Configuración manual
 
-Si un cliente no está disponible, rechazaste su configuración en el wizard o ya tiene un registro, seguí la guía detallada correspondiente para recuperarlo o actualizarlo: [Claude Code y flujo de agentes](docs/agent-workflow.md), [Codex](docs/codex-install.md) o [Pi](docs/pi-install.md). El wizard no reemplaza los registros existentes. No uses checkouts ni rutas locales al paquete.
+Si un cliente no está disponible, `setup` lo reporta bloqueado o su estado quedó desconocido, seguí la guía detallada correspondiente para recuperarlo o actualizarlo: [Claude Code y flujo de agentes](docs/agent-workflow.md), [Codex](docs/codex-install.md) o [Pi](docs/pi-install.md). `setup` nunca reemplaza un registro existente sin una decisión explícita. No uses checkouts ni rutas locales al paquete.
 
 ### Credenciales y flujo seguro
 
@@ -95,16 +101,22 @@ For a central version pin, install the exact version again, such as `npm install
 - Without --global: version isolated per project.
 - With --global: one central version for the whole machine.
 
-### Opt-in client configuration wizard
+### How `setup` works
 
-Use this wizard as the primary client configuration method to detect available clients and configure only the selected clients after one confirmation per available client:
+`setup` plans providers and clients in a single pass. It prints a complete, secret-free plan and asks for **one confirmation covering the whole plan**. Only then does it execute, always in the same order: the project `.env`, the ignore rule, then Claude Code, Codex, and Pi.
 
 ```bash
-ticket-analyzer-mcp setup --configure-clients
-ticket-analyzer-mcp setup --configure-clients --dry-run
+ticket-analyzer-mcp setup
+ticket-analyzer-mcp setup --dry-run
 ```
 
-Normal mode detects available clients, prints a non-secret plan, and executes only confirmed commands. Client CLIs run with a limited environment and no provider credentials. `--dry-run` prints the same plan without confirmations or child processes; it may write `.env` when providers are selected. The legacy `ticket-analyzer-mcp setup` remains credential-only and never detects or configures clients. The wizard does not inspect, replace, or remove existing registrations; update them manually when needed and restart the client after configuration or updates. Keep provider credentials in the project `.env`; `TICKET_ANALYZER_ENV_FILE` may point to another file and real environment variables take precedence.
+`--dry-run` prints the same plan and writes nothing, spawning no child process. `--configure-clients` is still accepted as a compatibility alias, but it no longer changes anything: client configuration is part of the normal flow.
+
+Before proposing a change, the manager inspects what already exists and classifies it as owned, matching, foreign, absent, or unknown. Adopting a matching registration or replacing a foreign one takes an explicit decision, and removing anything has to be asked for explicitly. An unknown state is never permission to act: the manager stops and explains how to recover by hand.
+
+If a stage fails, the manager stops there and **rolls nothing back automatically**. The report names what was applied, what failed, and what was never attempted, so the project's state is never a guess. A blocked client does not prevent the others from being applied.
+
+Client CLIs run with a limited environment and no provider credentials. On Windows, `shell: false` cannot use `.cmd` or `.bat` shims; a direct executable is required. Keep provider credentials in the project `.env`; `TICKET_ANALYZER_ENV_FILE` may point to another file and real environment variables take precedence.
 
 #### Claude Code
 
@@ -112,4 +124,4 @@ The manager owns only Claude's `ticket-analyzer` project MCP registration and bi
 
 ### Manual recovery
 
-If a client is unavailable, you declined its wizard configuration, or it is already registered, use the relevant detailed guide to recover or update it: [Claude Code and agent workflow](docs/agent-workflow.md), [Codex](docs/codex-install.md), or [Pi](docs/pi-install.md). The wizard does not replace existing registrations. Do not use checkouts or local package paths.
+If a client is unavailable, `setup` reports it as blocked, or its state came back unknown, use the relevant detailed guide to recover or update it: [Claude Code and agent workflow](docs/agent-workflow.md), [Codex](docs/codex-install.md), or [Pi](docs/pi-install.md). `setup` never replaces an existing registration without an explicit decision. Do not use checkouts or local package paths.
