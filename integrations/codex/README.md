@@ -7,7 +7,7 @@
 Install one machine-wide published version:
 
 ```bash
-npm install --global ticket-analyzer-mcp@2.3.1
+npm install --global ticket-analyzer-mcp@3.0.0
 ```
 
 From the target project, run the published setup wizard:
@@ -20,7 +20,7 @@ Choose the required providers, enter their credentials, then select **Codex** al
 
 ```bash
 ticket-analyzer-mcp setup --configure-clients
-ticket-analyzer-mcp setup --configure-clients --dry-run
+ticket-analyzer-mcp setup --dry-run --providers trello,jira --clients codex
 ```
 
 Normal mode detects available clients, prints one non-secret plan, and asks for one confirmation per selected available client. It executes only confirmed clients, using a limited environment without provider credentials. `--dry-run` prints the same plan without confirmations or child processes; it may write `.env` when providers are selected. On Windows, `shell: false` cannot use `.cmd` or `.bat` shims; a direct executable is required.
@@ -37,7 +37,7 @@ The Codex command follows `codex mcp add <NAME> --env KEY=VALUE -- COMMAND...`; 
 
 Mark the project as trusted from Codex itself before selecting the Codex integration. Setup never reads or changes Codex trust and never touches `$CODEX_HOME` or your home directory; it asks you to confirm the prerequisite and treats that as an unverified assertion. It reconciles only the `[mcp_servers.ticket-analyzer]` entry in the project's own `.codex/config.toml`, shows the exact diff before you confirm, preserves every byte outside that entry, and reports Codex as blocked without writing anything whenever the entry cannot be targeted unambiguously. See [docs/codex-install.md](../../docs/codex-install.md) for the full boundary.
 
-Restart Codex after registering the server or updating the package. Update the central version with `npm update --global ticket-analyzer-mcp`; an exact global install such as `npm install --global ticket-analyzer-mcp@2.3.1` pins it. The project-local alternative `npm install ticket-analyzer-mcp@2.3.1` is isolated to that project.
+Restart Codex after registering the server or updating the package. Update the central version with `npm update --global ticket-analyzer-mcp`; an exact global install such as `npm install --global ticket-analyzer-mcp@3.0.0` pins it. The project-local alternative `npm install ticket-analyzer-mcp@3.0.0` is isolated to that project.
 
 Do not replace the global command with a checkout, filesystem path, or direct Node entrypoint.
 

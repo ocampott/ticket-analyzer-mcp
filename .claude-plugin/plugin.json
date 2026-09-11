@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "ticket-analyzer",
-  "version": "2.3.1",
+  "version": "3.0.0",
   "description": "Claude Code integration for analyzing Trello cards, Jira issues and Azure DevOps work items with a client-neutral MCP server",
   "author": {
     "name": "ocampott"

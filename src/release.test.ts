@@ -1,4 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -20,20 +22,62 @@ const ACTIVE_USER_DOCS = [
   "skills/setup/SKILL.md",
 ];
 
-describe("2.3.1 release metadata and guidance", () => {
+// The suites run against the working tree, where every module exists. Only the packed
+// tarball can prove that `files` still covers what the binary actually imports.
+function packedFiles(): string[] {
+  const output = execFileSync("npm", ["pack", "--dry-run", "--json"], { cwd: repoRoot, encoding: "utf8" });
+  return (JSON.parse(output) as Array<{ files: Array<{ path: string }> }>)[0].files.map((entry) => entry.path);
+}
+
+function reachableFrom(entry: string): Set<string> {
+  const reachable = new Set<string>();
+  const pending = [entry];
+  while (pending.length > 0) {
+    const current = pending.pop() as string;
+    if (reachable.has(current)) continue;
+    reachable.add(current);
+    for (const [, specifier] of read(current).matchAll(/from\s+"(\.[^"]+)"/g)) {
+      pending.push(path.posix.join(path.posix.dirname(current), specifier));
+    }
+  }
+  return reachable;
+}
+
+describe("published package completeness", () => {
+  test("ships every module the binary imports", () => {
+    const published = new Set(packedFiles());
+    const entry = (packageJson("package.json").bin as Record<string, string>)["ticket-analyzer-mcp"];
+
+    for (const module of reachableFrom(entry)) {
+      expect([module, published.has(module)]).toEqual([module, true]);
+    }
+  });
+});
+
+describe("documented commands are runnable", () => {
+  test("never advertises a dry-run without the selections it requires", () => {
+    for (const doc of ACTIVE_USER_DOCS) {
+      for (const [invocation] of read(doc).matchAll(/ticket-analyzer-mcp setup[^\n`]*--dry-run[^\n`]*/g)) {
+        expect([doc, invocation.includes("--providers") && invocation.includes("--clients")]).toEqual([doc, true]);
+      }
+    }
+  });
+});
+
+describe("3.0.0 release metadata and guidance", () => {
   test("aligns published metadata without changing the independent workflow contract", () => {
     const packageManifest = packageJson("package.json");
     const lockfile = packageJson("package-lock.json");
     const lockRoot = (lockfile.packages as Record<string, Record<string, unknown>>)[""];
 
-    expect(packageManifest.version).toBe("2.3.1");
-    expect(lockfile.version).toBe("2.3.1");
-    expect(lockRoot.version).toBe("2.3.1");
-    expect(read("src/index.ts")).toContain('version: "2.3.1"');
-    expect(read("bin/cli.js")).toContain('const VERSION = "2.3.1"');
-    expect(read("extensions/ticket-analyzer.js")).toContain('version: "2.3.1"');
-    expect(packageJson(".claude-plugin/plugin.json").version).toBe("2.3.1");
-    expect((packageJson(".claude-plugin/marketplace.json").plugins as Array<Record<string, unknown>>)[0].version).toBe("2.3.1");
+    expect(packageManifest.version).toBe("3.0.0");
+    expect(lockfile.version).toBe("3.0.0");
+    expect(lockRoot.version).toBe("3.0.0");
+    expect(read("src/index.ts")).toContain('version: "3.0.0"');
+    expect(read("bin/cli.js")).toContain('const VERSION = "3.0.0"');
+    expect(read("extensions/ticket-analyzer.js")).toContain('version: "3.0.0"');
+    expect(packageJson(".claude-plugin/plugin.json").version).toBe("3.0.0");
+    expect((packageJson(".claude-plugin/marketplace.json").plugins as Array<Record<string, unknown>>)[0].version).toBe("3.0.0");
     expect(read("AGENTS.md")).toMatch(/Instruction contract version: 3\.0\.0/);
   });
 
@@ -77,7 +121,7 @@ describe("2.3.1 release metadata and guidance", () => {
   });
 
   test("pins the published package names where the setup manager now owns them", () => {
-    expect(read("skills/setup/SKILL.md")).toContain("pi install -l npm:ticket-analyzer-mcp@2.3.1");
+    expect(read("skills/setup/SKILL.md")).toContain("pi install -l npm:ticket-analyzer-mcp@3.0.0");
     expect(read("bin/setup-adapters.js")).toContain('export const PI_PACKAGE_NAME = "ticket-analyzer-mcp"');
     expect(read("bin/setup-files.js")).toContain('export const CODEX_COMMAND = "ticket-analyzer-mcp"');
   });
@@ -111,14 +155,14 @@ describe("2.3.1 release metadata and guidance", () => {
     const setupSkill = read("skills/setup/SKILL.md");
     const codexAdapter = read("integrations/codex/README.md");
 
-    expect(readme).toContain("npm install --global ticket-analyzer-mcp@2.3.1");
+    expect(readme).toContain("npm install --global ticket-analyzer-mcp@3.0.0");
     expect(readme).toContain("npm update --global ticket-analyzer-mcp");
     expect(readme).toContain("Without --global: version isolated per project.");
     expect(readme).toContain("With --global: one central version for the whole machine.");
     expect(readme).not.toContain("npx");
 
     for (const doc of [piDocs, codexDocs, workflowDocs, setupSkill, codexAdapter]) {
-      expect(doc).toContain("npm install --global ticket-analyzer-mcp@2.3.1");
+      expect(doc).toContain("npm install --global ticket-analyzer-mcp@3.0.0");
       expect(doc).toContain("npm update --global ticket-analyzer-mcp");
       expect(doc).not.toContain("npx");
     }
@@ -171,18 +215,25 @@ describe("2.3.1 release metadata and guidance", () => {
   test("keeps the release changelog current and historically ordered", () => {
     const changelog = read("CHANGELOG.md");
 
-    expect(changelog.startsWith("# Changelog\n\n## [2.3.1] - 2026-09-09")).toBe(true);
-    expect(changelog.indexOf("## [2.3.1]")).toBeLessThan(changelog.indexOf("## [2.2.2]"));
-    expect(changelog).toMatch(/client configuration wizard/i);
-    expect(changelog).toMatch(/dry-run/i);
-    expect(changelog).toMatch(/safe command execution/i);
-    expect(changelog).toMatch(/global MCP manifest/i);
+    expect(changelog.startsWith("# Changelog\n\n## [3.0.0] - 2026-09-10")).toBe(true);
+    expect(changelog.indexOf("## [3.0.0]")).toBeLessThan(changelog.indexOf("## [2.2.2]"));
+  });
+
+  test("declares the breaking changes that make this release major", () => {
+    // Content guards must read the current entry. Matching the whole file lets a removed
+    // behavior keep passing forever on the historical entry that introduced it.
+    const current = read("CHANGELOG.md").split("## [2.3.1]")[0];
+
+    expect(current).toMatch(/\*\*Breaking\.\*\*/);
+    expect(current).toMatch(/TICKET_ANALYZER_ENV_FILE/);
+    expect(current).toMatch(/--configure-clients/);
+    expect(current).toMatch(/ERR_MODULE_NOT_FOUND/);
+    expect(current).toMatch(/dry-run/i);
   });
 
   test("aligns the active Codex adapter snapshots without changing their contract", () => {
     for (const doc of ["integrations/codex/AGENTS.md", "integrations/codex/AGENTS.template.md"]) {
       const contents = read(doc);
-      expect(contents).toContain("2.3.1");
       expect(contents).toContain("3.0.0");
       expect(contents).not.toContain("2.2.2");
     }

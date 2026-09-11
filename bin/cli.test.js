@@ -24,10 +24,12 @@ describe("ticket-analyzer CLI", () => {
     const output = [];
     await runCli(["--help"], { stdout: { write: (text) => output.push(text) } });
     const text = output.join(" ");
-    expect(text).toContain("ticket-analyzer-mcp 2.3.1");
+    expect(text).toContain("ticket-analyzer-mcp 3.0.0");
     expect(text).toContain("ticket-analyzer-mcp setup");
     expect(text).toContain("--configure-clients");
-    expect(text).toMatch(/--dry-run.*complete redacted plan.*without prompts or mutations/i);
+    expect(text).toMatch(/--providers a,b.*trello, jira, azure/i);
+    expect(text).toMatch(/--clients a,b.*claude, codex, pi/i);
+    expect(text).toMatch(/--dry-run.*complete redacted plan.*needs the flags above/i);
     expect(text).not.toContain("npx");
   });
 
@@ -90,6 +92,32 @@ describe("ticket-analyzer CLI", () => {
     ["--dry-run", "--dry-run"],
     ["--configure-clients", "unexpected"],
   ])("rejects invalid setup arguments: %p", (args) => {
+    expect(() => parseSetupArgs(args)).toThrow(/invalid setup argument/i);
+  });
+
+  // Without these flags there is no way to reach --dry-run from a shell: the manager
+  // requires explicit selections in that mode and refuses to prompt for them.
+  test.each([
+    [["--providers", "trello"], { providers: ["trello"] }],
+    [["--providers=trello,jira,azure"], { providers: ["trello", "jira", "azure"] }],
+    [["--clients", "claude,pi"], { clients: ["claude", "pi"] }],
+    [["--providers", "jira", "--clients", "codex"], { providers: ["jira"], clients: ["codex"] }],
+    [["--providers", "trello,trello"], { providers: ["trello"] }],
+  ])("parses explicit setup selections: %p", (args, selections) => {
+    expect(parseSetupArgs(args).selections).toEqual(selections);
+  });
+
+  test("omits selections entirely when neither flag is given, so prompting still applies", () => {
+    expect(parseSetupArgs(["--dry-run"]).selections).toBeUndefined();
+  });
+
+  test.each([
+    ["--providers", "bitbucket"],
+    ["--clients", "vscode"],
+    ["--providers", ""],
+    ["--providers"],
+    ["--providers", "trello", "--providers", "jira"],
+  ])("rejects unusable selection arguments: %p", (...args) => {
     expect(() => parseSetupArgs(args)).toThrow(/invalid setup argument/i);
   });
 

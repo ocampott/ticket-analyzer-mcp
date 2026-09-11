@@ -9,17 +9,17 @@ user-invocable: true
 Use the machine-wide published npm CLI instead of collecting credentials in Claude Code:
 
 ```bash
-npm install --global ticket-analyzer-mcp@2.3.1
+npm install --global ticket-analyzer-mcp@3.0.0
 ticket-analyzer-mcp setup
 ```
 
 `setup` plans providers and clients in a single pass. It prints one complete, secret-free plan and asks for a single confirmation covering the whole plan, then executes in a fixed order: the project `.env`, the ignore rule, then `claude`, `codex`, and `pi`.
 
 ```bash
-ticket-analyzer-mcp setup --dry-run
+ticket-analyzer-mcp setup --dry-run --providers trello,jira --clients claude,codex,pi
 ```
 
-`--dry-run` prints the same plan and writes nothing, spawning no child process. `--configure-clients` is still accepted as a compatibility alias, but client configuration is part of the normal flow and the flag no longer changes anything.
+`--dry-run` prints the same plan and writes nothing, spawning no child process. It needs `--providers` and `--clients` because it never prompts; both accept comma-separated values (`trello`, `jira`, `azure` and `claude`, `codex`, `pi`), and either flag can also be used on its own to skip that prompt in a normal run. `--configure-clients` is still accepted as a compatibility alias, but client configuration is part of the normal flow and the flag no longer changes anything.
 
 Before proposing a change, setup inspects the existing registration and classifies it as owned, matching, foreign, absent, or unknown. Adopting a matching registration or replacing a foreign one requires an explicit decision, and removal requires explicit intent. An unknown state is never permission to act: setup stops and explains manual recovery instead of guessing.
 
@@ -27,7 +27,7 @@ A failed stage stops the run and nothing is rolled back automatically. The resul
 
 Run it from the project that should own the credentials. It requires an interactive terminal, uses purpose-labeled checkbox choices for Trello cards, Jira issues, and Azure DevOps work items, validates required values, preserves unrelated `.env` keys, and writes selected credentials to the ignored project-local `.env`. Before prompting each selected provider, explain the exact credential source and format: Trello API key and token from `https://trello.com/app-key`; Jira site hostname, account email, and Atlassian API token; Azure DevOps organization, project, and PAT with minimum `Work Items: Read` scope. `Work Items: Read & Write` is needed only for comments. Credentials are loaded from `.env` by the MCP server; real environment variables take precedence.
 
-Update the central CLI with `npm update --global ticket-analyzer-mcp`. An exact global install pins the machine-wide version; `npm install ticket-analyzer-mcp@2.3.1` is an alternative isolated to one project. Do not pass provider secrets to `claude mcp add`, `claude plugin`, shell commands, or any client configuration. In particular, never generate or execute a command containing `--env TRELLO_TOKEN=...`, `--env JIRA_API_TOKEN=...`, `--env AZURE_DEVOPS_PAT=...`, or any other secret. The CLI never prints, echoes, logs, or includes secret values in commands, and it changes only the registrations it manages, after the plan is confirmed.
+Update the central CLI with `npm update --global ticket-analyzer-mcp`. An exact global install pins the machine-wide version; `npm install ticket-analyzer-mcp@3.0.0` is an alternative isolated to one project. Do not pass provider secrets to `claude mcp add`, `claude plugin`, shell commands, or any client configuration. In particular, never generate or execute a command containing `--env TRELLO_TOKEN=...`, `--env JIRA_API_TOKEN=...`, `--env AZURE_DEVOPS_PAT=...`, or any other secret. The CLI never prints, echoes, logs, or includes secret values in commands, and it changes only the registrations it manages, after the plan is confirmed.
 
 Select any combination of Claude Code, OpenAI Codex, and Pi with the checkbox selector. Leave all clients unchecked to configure later. Some work stays manual by design, and setup reports it rather than attempting it:
 
@@ -38,7 +38,7 @@ Select any combination of Claude Code, OpenAI Codex, and Pi with the checkbox se
 Follow every grouped, client-specific next step it prints:
 
 - Claude Code: `claude plugin marketplace add ocampott/ticket-analyzer-mcp`, then `claude plugin install ticket-analyzer@ticket-analyzer-mcp`; update with `claude plugin marketplace update ticket-analyzer-mcp` and `claude plugin update ticket-analyzer@ticket-analyzer-mcp`, then restart Claude Code.
-- Pi: install the published Pi-managed package with `pi install -l npm:ticket-analyzer-mcp@2.3.1`; update with `pi update npm:ticket-analyzer-mcp`, then restart or reload Pi. Pi is managed by Pi, not the npm global CLI. Pi packages run with full system access, so review the package source.
+- Pi: install the published Pi-managed package with `pi install -l npm:ticket-analyzer-mcp@3.0.0`; update with `pi update npm:ticket-analyzer-mcp`, then restart or reload Pi. Pi is managed by Pi, not the npm global CLI. Pi packages run with full system access, so review the package source.
 - Codex: register only the non-secret absolute env-file path with `codex mcp add ticket-analyzer --env TICKET_ANALYZER_ENV_FILE=/absolute/path/to/project/.env -- ticket-analyzer-mcp`, then restart Codex.
 - No client: setup explicitly reports that credentials are ready locally but no agent client has been configured yet.
 
